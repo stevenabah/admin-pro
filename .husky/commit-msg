@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# 验证 commit message
+COMMIT_MSG=$(cat "$1")
+echo "$COMMIT_MSG" | npx commitlint
+
+# 运行 lint-staged
+npx lint-staged
+
+# 自动推送到远程
+git push
