@@ -14,7 +14,9 @@
     "axios": "^1.6.7",
     "echarts": "^5.4.3",
     "element-plus": "^2.5.4",
+    "particles.js": "^2.0.0",
     "pinia": "^2.1.7",
+    "tsparticles": "^3.9.1",
     "vue": "^3.4.15",
     "vue-echarts": "^6.6.8",
     "vue-router": "^4.2.5"

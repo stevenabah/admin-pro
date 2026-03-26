@@ -3,8 +3,6 @@ import { createPinia } from "pinia";
 import ElementPlus from "element-plus";
 import "element-plus/dist/index.css";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
-import Particles from "@tsparticles/vue3";
-import { loadSlim } from "@tsparticles/slim";
 import App from "./App.vue";
 import router from "./router";
 import "./assets/main.css";
@@ -20,10 +18,5 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia());
 app.use(router);
 app.use(ElementPlus);
-app.use(Particles, {
-  init: async () => {
-    await loadSlim();
-  },
-});
 
 app.mount("#app");

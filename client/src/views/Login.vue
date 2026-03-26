@@ -1,5 +1,6 @@
 <template>
-  <div class="login-container" id="particles-js">
+  <div class="login-container">
+    <div id="particles-js" class="particles"></div>
     <el-card class="login-card">
       <template #header>
         <div class="card-header-content">
@@ -17,7 +18,6 @@
         </div>
       </template>
 
-      <!-- 登录表单 -->
       <el-form
         v-if="activeTab === 'login'"
         :model="loginForm"
@@ -52,7 +52,6 @@
         </el-form-item>
       </el-form>
 
-      <!-- 注册表单 -->
       <el-form
         v-else
         :model="registerForm"
@@ -214,34 +213,86 @@ onMounted(() => {
   if (window.particlesJS) {
     window.particlesJS("particles-js", {
       particles: {
-        color: { value: "#409eff" },
+        number: {
+          value: 80,
+          density: {
+            enable: true,
+            value_area: 800,
+          },
+        },
+        color: {
+          value: "#409eff",
+        },
+        shape: {
+          type: "circle",
+          stroke: {
+            width: 0,
+            color: "#409eff",
+          },
+        },
+        opacity: {
+          value: 0.5,
+          random: true,
+          anim: {
+            enable: true,
+            speed: 1,
+            opacity_min: 0.1,
+            sync: false,
+          },
+        },
+        size: {
+          value: 3,
+          random: true,
+          anim: {
+            enable: true,
+            speed: 2,
+            size_min: 1,
+            sync: false,
+          },
+        },
         links: {
-          color: "#409eff",
-          distance: 150,
           enable: true,
+          distance: 150,
+          color: "#409eff",
           opacity: 0.4,
+          width: 1,
         },
         move: {
           enable: true,
           speed: 1,
           direction: "none",
-          outModes: { default: "bounce" },
+          random: true,
+          straight: false,
+          outModes: {
+            default: "bounce",
+          },
         },
-        number: { density: { enable: true, area: 800 }, value: 80 },
-        opacity: { value: 0.5 },
-        shape: { type: "circle" },
-        size: { value: { min: 1, max: 3 } },
       },
       interactivity: {
+        detect_on: "canvas",
         events: {
-          onHover: { enable: true, mode: "grab" },
-          onClick: { enable: true, mode: "push" },
+          onhover: {
+            enable: true,
+            mode: "grab",
+          },
+          onclick: {
+            enable: true,
+            mode: "push",
+          },
         },
         modes: {
-          grab: { distance: 140, links: { opacity: 1 } },
-          push: { quantity: 4 },
+          grab: {
+            distance: 140,
+            links: {
+              opacity: 0.8,
+            },
+          },
+          push: {
+            quantity: 4,
+          },
         },
       },
+      retina_detect: true,
     });
   }
 });
@@ -253,20 +304,29 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+  background: linear-gradient(135deg, #0a0a1a 0%, #1a1a2e 50%, #0f0f23 100%);
   position: relative;
   overflow: hidden;
+}
+
+.particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   z-index: 1;
+  background: transparent;
 }
 
 .login-card {
   width: 420px;
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(64, 158, 255, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(64, 158, 255, 0.3);
   overflow: hidden;
   background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(20px);
   position: relative;
   z-index: 10;
 }
