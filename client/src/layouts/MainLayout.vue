@@ -42,6 +42,14 @@
           <el-icon><List /></el-icon>
           <span>表格编辑</span>
         </el-menu-item>
+        <el-menu-item index="/ai-copilot">
+          <el-icon><ChatDotRound /></el-icon>
+          <span>AI 助手</span>
+        </el-menu-item>
+        <el-menu-item index="/nl-query">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>自然语言查询</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -123,6 +131,8 @@ import {
   Setting,
   ArrowDown,
   SwitchButton,
+  ChatDotRound,
+  DataAnalysis,
 } from "@element-plus/icons-vue";
 
 const route = useRoute();

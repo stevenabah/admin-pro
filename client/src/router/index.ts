@@ -58,6 +58,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/Data.vue"),
         meta: { title: "表格编辑" },
       },
+      {
+        path: "ai-copilot",
+        name: "AICopilot",
+        component: () => import("@/views/AICopilot.vue"),
+        meta: { title: "AI 助手" },
+      },
+      {
+        path: "nl-query",
+        name: "NLQuery",
+        component: () => import("@/views/NLQuery.vue"),
+        meta: { title: "自然语言查询" },
+      },
     ],
   },
 ];
