@@ -19,7 +19,7 @@
         >
           <div class="avatar">
             <el-icon v-if="msg.role === 'user'" size="20"><User /></el-icon>
-            <el-icon v-else size="20"><Robot /></el-icon>
+            <el-icon v-else size="20"><Service /></el-icon>
           </div>
           <div class="content">
             <div class="message-content">{{ msg.content }}</div>
@@ -77,7 +77,7 @@
 import { ref, reactive, nextTick } from "vue";
 import { useUserStore, api } from "@/stores/user";
 import { ElMessage } from "element-plus";
-import { ChatDotRound, User, Robot, Position } from "@element-plus/icons-vue";
+import { ChatDotRound, User, Service, Position } from "@element-plus/icons-vue";
 
 interface Message {
   role: "user" | "assistant";
