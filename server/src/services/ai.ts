@@ -5,6 +5,10 @@ const prisma = new PrismaClient();
 
 // 默认配置
 const DEFAULT_CONFIG: Record<string, { baseUrl: string; model: string }> = {
+  minimax: {
+    baseUrl: "https://api.minimax.chat/v1",
+    model: "MiniMax-Text-01",
+  },
   zhipu: {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
     model: "glm-4",
@@ -62,12 +66,13 @@ function getAIConfig(config: AIConfig): AIConfig {
 async function callAI(messages: any[], config: AIConfig): Promise<string> {
   const { provider, baseUrl, apiKey, model } = config;
 
-  console.log(`[AI] Calling ${provider} API with model: ${model}`);
+  console.log(`[AI] Provider: ${provider}`);
   console.log(`[AI] BaseURL: ${baseUrl}`);
+  console.log(`[AI] Model: ${model}`);
+  console.log(`[AI] Messages count: ${messages.length}`);
 
-  // 根据 provider 选择不同的 API 格式
+  // Claude API 格式
   if (provider === "claude") {
-    // Claude API 格式
     const lastMessage = messages[messages.length - 1].content;
     const systemMessage =
       messages.find((m) => m.role === "system")?.content || "";
@@ -95,9 +100,11 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
 
     const data = await response.json();
     return data.content[0].text;
-  } else {
-    // OpenAI 兼容格式 (包括智谱 GLM, 硅基流动等)
-    const response = await fetch(baseUrl, {
+  }
+
+  // MiniMax API 格式 (OpenAI 兼容)
+  if (provider === "minimax") {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -111,13 +118,43 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`API error: ${response.status} - ${error}`);
+      const errorText = await response.text();
+      console.error(
+        `[AI] MiniMax API error: ${response.status} - ${errorText}`,
+      );
+      throw new Error(`MiniMax API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
+    console.log(
+      `[AI] MiniMax response:`,
+      JSON.stringify(data).substring(0, 200),
+    );
     return data.choices[0].message.content;
   }
+
+  // OpenAI 兼容格式 (默认)
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: messages,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[AI] API error: ${response.status} - ${errorText}`);
+    throw new Error(`API error: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0].message.content;
 }
 
 // 模拟对话回复

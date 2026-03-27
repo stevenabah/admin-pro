@@ -85,6 +85,7 @@
       <el-form :model="apiSettings" label-width="100px">
         <el-form-item label="API Provider">
           <el-select v-model="apiSettings.provider" @change="onProviderChange">
+            <el-option label="MiniMax (海螺)" value="minimax" />
             <el-option label="智谱 AI (GLM-4)" value="zhipu" />
             <el-option label="OpenAI (GPT-4)" value="openai" />
             <el-option label="Claude (Anthropic)" value="claude" />
@@ -160,6 +161,10 @@ interface ApiSettings {
 
 // Provider 默认配置
 const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
+  minimax: {
+    baseUrl: "https://api.minimax.chat/v1",
+    model: "MiniMax-Text-01",
+  },
   zhipu: {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
     model: "glm-4",
@@ -197,10 +202,10 @@ const messagesRef = ref<HTMLElement>();
 const showSettings = ref(false);
 
 const defaultSettings: ApiSettings = {
-  provider: "claude",
-  baseUrl: PROVIDER_DEFAULTS.claude.baseUrl,
+  provider: "minimax",
+  baseUrl: PROVIDER_DEFAULTS.minimax.baseUrl,
   apiKey: "",
-  model: PROVIDER_DEFAULTS.claude.model,
+  model: PROVIDER_DEFAULTS.minimax.model,
 };
 
 const apiSettings = reactive<ApiSettings>({ ...defaultSettings });
