@@ -140,7 +140,7 @@
               <div class="toolbar-left">
                 <el-dropdown @command="handleMentionUser" trigger="click">
                   <el-button type="primary" link size="small">
-                    <el-icon><At /></el-icon> @提及
+                    <el-icon><ChatDotRound /></el-icon> @提及
                   </el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
@@ -333,7 +333,7 @@
 import { ref, reactive, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Back, Clock, At, Paperclip } from "@element-plus/icons-vue";
+import { Back, Clock, Paperclip } from "@element-plus/icons-vue";
 import {
   getTaskDetail,
   updateTask,

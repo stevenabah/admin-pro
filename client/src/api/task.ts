@@ -100,6 +100,7 @@ export const createTask = (data: {
   priority?: TaskPriorityType;
   assigneeId?: string;
   dueDate?: string;
+  tags?: string[];
 }) => {
   return api.post("/tasks", data);
 };
@@ -114,6 +115,7 @@ export const updateTask = (
     assigneeId?: string;
     dueDate?: string;
     status?: TaskStatusType;
+    tags?: string[];
   },
 ) => {
   return api.put(`/tasks/${id}`, data);
@@ -122,6 +124,21 @@ export const updateTask = (
 // 删除任务
 export const deleteTask = (id: string) => {
   return api.delete(`/tasks/${id}`);
+};
+
+// 批量更新任务状态
+export const batchUpdateStatus = (taskIds: string[], status: TaskStatusType) => {
+  return api.put("/tasks/batch/status", { taskIds, status });
+};
+
+// 批量分配任务
+export const batchAssignTask = (taskIds: string[], assigneeId: string) => {
+  return api.put("/tasks/batch/assign", { taskIds, assigneeId });
+};
+
+// 批量删除任务
+export const batchDeleteTask = (taskIds: string[]) => {
+  return api.delete("/tasks/batch", { data: { taskIds } });
 };
 
 // 添加评论

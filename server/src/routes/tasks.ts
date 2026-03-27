@@ -45,6 +45,7 @@ router.get(
         priority,
         assigneeId,
         keyword,
+        tag,
         sortBy = "createdAt",
         sortOrder = "desc",
       } = req.query;
@@ -65,6 +66,9 @@ router.get(
           { title: { contains: keyword as string } },
           { description: { contains: keyword as string } },
         ];
+      }
+      if (tag) {
+        where.tags = { contains: tag as string };
       }
 
       const skip = (Number(page) - 1) * Number(pageSize);
@@ -101,18 +105,32 @@ router.get(
         prisma.task.count({ where }),
       ]);
 
+      // 解析标签
+      const tasksWithParsedTags = tasks.map((t) => {
+        let parsedTags: string[] = [];
+        if (t.tags) {
+          try {
+            parsedTags = JSON.parse(t.tags);
+          } catch (e) {
+            parsedTags = [];
+          }
+        }
+        return {
+          ...t,
+          tags: parsedTags,
+          statusText: STATUS_TEXT[t.status],
+          priorityText: PRIORITY_TEXT[t.priority],
+          isOverdue:
+            !["COMPLETED", "CANCELLED"].includes(t.status) &&
+            t.dueDate !== null &&
+            new Date(t.dueDate) < new Date(),
+        };
+      });
+
       res.json({
         code: 200,
         data: {
-          list: tasks.map((t) => ({
-            ...t,
-            statusText: STATUS_TEXT[t.status],
-            priorityText: PRIORITY_TEXT[t.priority],
-            isOverdue:
-              !["COMPLETED", "CANCELLED"].includes(t.status) &&
-              t.dueDate !== null &&
-              new Date(t.dueDate) < new Date(),
-          })),
+          list: tasksWithParsedTags,
           pagination: {
             page: Number(page),
             pageSize: Number(pageSize),
@@ -125,7 +143,7 @@ router.get(
       console.error("Get tasks error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 获取看板数据（按状态分组）
@@ -147,8 +165,30 @@ router.get(
         },
       });
 
+      // 解析标签
+      const tasksWithParsedTags = tasks.map((t) => {
+        let parsedTags: string[] = [];
+        if (t.tags) {
+          try {
+            parsedTags = JSON.parse(t.tags);
+          } catch (e) {
+            parsedTags = [];
+          }
+        }
+        return {
+          ...t,
+          tags: parsedTags,
+          statusText: STATUS_TEXT[t.status],
+          priorityText: PRIORITY_TEXT[t.priority],
+          isOverdue:
+            !["COMPLETED", "CANCELLED"].includes(t.status) &&
+            t.dueDate !== null &&
+            new Date(t.dueDate) < new Date(),
+        };
+      });
+
       const now = new Date();
-      const boardData = {
+      const boardData: Record<string, typeof tasksWithParsedTags> = {
         PENDING: [],
         IN_PROGRESS: [],
         REVIEW: [],
@@ -156,17 +196,9 @@ router.get(
         CANCELLED: [],
       };
 
-      tasks.forEach((task) => {
-        if (boardData[task.status as keyof typeof boardData]) {
-          boardData[task.status as keyof typeof boardData].push({
-            ...task,
-            statusText: STATUS_TEXT[task.status],
-            priorityText: PRIORITY_TEXT[task.priority],
-            isOverdue:
-              !["COMPLETED", "CANCELLED"].includes(task.status) &&
-              task.dueDate !== null &&
-              new Date(task.dueDate) < now,
-          });
+      tasksWithParsedTags.forEach((task) => {
+        if (boardData[task.status]) {
+          boardData[task.status].push(task);
         }
       });
 
@@ -178,7 +210,7 @@ router.get(
       console.error("Get board error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 获取单个任务详情
@@ -233,7 +265,16 @@ router.get(
         return res.json({ code: 404, message: "任务不存在" });
       }
 
-      // 解析评论中的mentions和attachments
+      // 解析评论中的mentions和attachments和标签
+      let parsedTags: string[] = [];
+      if (task.tags) {
+        try {
+          parsedTags = JSON.parse(task.tags);
+        } catch (e) {
+          parsedTags = [];
+        }
+      }
+
       const processedComments = await Promise.all(
         task.comments.map(async (comment) => {
           let mentionUsers: any[] = [];
@@ -274,6 +315,7 @@ router.get(
         code: 200,
         data: {
           ...task,
+          tags: parsedTags,
           comments: processedComments,
           statusText: STATUS_TEXT[task.status],
           priorityText: PRIORITY_TEXT[task.priority],
@@ -283,7 +325,7 @@ router.get(
       console.error("Get task error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 创建任务
@@ -293,7 +335,7 @@ router.post(
   checkPermission("taskManage"),
   async (req: AuthRequest, res) => {
     try {
-      const { title, description, priority, assigneeId, dueDate } = req.body;
+      const { title, description, priority, assigneeId, dueDate, tags } = req.body;
       const creatorId = req.user!.userId;
 
       if (!title) {
@@ -318,6 +360,7 @@ router.post(
           assigneeId,
           creatorId,
           dueDate: dueDate ? new Date(dueDate) : null,
+          tags: tags && Array.isArray(tags) ? JSON.stringify(tags) : null,
         },
         include: {
           assignee: {
@@ -339,10 +382,34 @@ router.post(
         },
       });
 
+      // 发送通知给任务负责人
+      if (assigneeId && assigneeId !== creatorId) {
+        const creator = await prisma.user.findUnique({ where: { id: creatorId } });
+        const creatorName = creator?.nickname || creator?.username || "有人";
+        await createNotification(
+          assigneeId,
+          "assign",
+          `${creatorName} 给你分配了新任务`,
+          title,
+          task.id
+        );
+      }
+
+      // 解析标签
+      let parsedTags: string[] = [];
+      if (task.tags) {
+        try {
+          parsedTags = JSON.parse(task.tags);
+        } catch (e) {
+          parsedTags = [];
+        }
+      }
+
       res.json({
         code: 200,
         data: {
           ...task,
+          tags: parsedTags,
           statusText: STATUS_TEXT[task.status],
           priorityText: PRIORITY_TEXT[task.priority],
         },
@@ -352,7 +419,7 @@ router.post(
       console.error("Create task error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 更新任务
@@ -363,7 +430,7 @@ router.put(
   async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { title, description, priority, assigneeId, dueDate } = req.body;
+      const { title, description, priority, assigneeId, dueDate, tags } = req.body;
       const userId = req.user!.userId;
 
       const existingTask = await prisma.task.findUnique({ where: { id } });
@@ -388,6 +455,9 @@ router.put(
       if (assigneeId !== undefined) updateData.assigneeId = assigneeId;
       if (dueDate !== undefined) {
         updateData.dueDate = dueDate ? new Date(dueDate) : null;
+      }
+      if (tags !== undefined) {
+        updateData.tags = tags && Array.isArray(tags) ? JSON.stringify(tags) : null;
       }
 
       const task = await prisma.task.update({
@@ -424,10 +494,34 @@ router.put(
         },
       });
 
+      // 如果重新指派了任务，发送通知给新的负责人
+      if (assigneeId !== undefined && assigneeId !== existingTask.assigneeId && assigneeId) {
+        const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+        const userName = currentUser?.nickname || currentUser?.username || "有人";
+        await createNotification(
+          assigneeId,
+          "assign",
+          `${userName} 给你分配了新任务`,
+          title || existingTask.title,
+          id
+        );
+      }
+
+      // 解析标签
+      let parsedTags: string[] = [];
+      if (task.tags) {
+        try {
+          parsedTags = JSON.parse(task.tags);
+        } catch (e) {
+          parsedTags = [];
+        }
+      }
+
       res.json({
         code: 200,
         data: {
           ...task,
+          tags: parsedTags,
           statusText: STATUS_TEXT[task.status],
           priorityText: PRIORITY_TEXT[task.priority],
         },
@@ -437,7 +531,7 @@ router.put(
       console.error("Update task error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 更新任务状态（专门的状态更新端点，带状态机校验）
@@ -494,10 +588,34 @@ router.put(
         },
       });
 
+      // 如果任务完成，通知任务创建者
+      if (status === "COMPLETED" && task.creatorId !== userId) {
+        const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+        const userName = currentUser?.nickname || currentUser?.username || "有人";
+        await createNotification(
+          task.creatorId,
+          "status_change",
+          `${userName} 完成了任务`,
+          task.title,
+          id
+        );
+      }
+
+      // 解析标签
+      let parsedTags: string[] = [];
+      if (updatedTask.tags) {
+        try {
+          parsedTags = JSON.parse(updatedTask.tags);
+        } catch (e) {
+          parsedTags = [];
+        }
+      }
+
       res.json({
         code: 200,
         data: {
           ...updatedTask,
+          tags: parsedTags,
           statusText: STATUS_TEXT[updatedTask.status],
           priorityText: PRIORITY_TEXT[updatedTask.priority],
         },
@@ -507,7 +625,7 @@ router.put(
       console.error("Update task status error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 删除任务
@@ -534,7 +652,203 @@ router.delete(
       console.error("Delete task error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
+);
+
+// 批量更新任务状态
+router.put(
+  "/batch/status",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { taskIds, status } = req.body;
+      const userId = req.user!.userId;
+
+      if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
+        return res.json({ code: 400, message: "请选择要操作的任务" });
+      }
+      if (!status) {
+        return res.json({ code: 400, message: "状态不能为空" });
+      }
+
+      // 验证所有任务都可以转换为目标状态
+      const tasks = await prisma.task.findMany({
+        where: { id: { in: taskIds } },
+      });
+
+      if (tasks.length !== taskIds.length) {
+        return res.json({ code: 400, message: "部分任务不存在" });
+      }
+
+      const invalidTasks = tasks.filter(
+        (t) => !TASK_STATUS_FLOW[t.status]?.includes(status)
+      );
+      if (invalidTasks.length > 0) {
+        return res.json({
+          code: 400,
+          message: `以下任务不能转换为 ${STATUS_TEXT[status]}：${invalidTasks.map((t) => t.title).join(", ")}`,
+        });
+      }
+
+      // 批量更新
+      await prisma.task.updateMany({
+        where: { id: { in: taskIds } },
+        data: { status },
+      });
+
+      // 批量创建日志
+      await prisma.taskLog.createMany({
+        data: tasks.map((t) => ({
+          taskId: t.id,
+          userId,
+          action: "status_change",
+          beforeStatus: t.status,
+          afterStatus: status,
+          content: `批量将任务状态从 ${STATUS_TEXT[t.status]} 改为 ${STATUS_TEXT[status]}`,
+        })),
+      });
+
+      // 如果任务完成，通知任务创建者
+      if (status === "COMPLETED") {
+        const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+        const userName = currentUser?.nickname || currentUser?.username || "有人";
+        for (const task of tasks) {
+          if (task.creatorId !== userId) {
+            await createNotification(
+              task.creatorId,
+              "status_change",
+              `${userName} 完成了任务`,
+              task.title,
+              task.id
+            );
+          }
+        }
+      }
+
+      res.json({
+        code: 200,
+        message: `成功更新 ${taskIds.length} 个任务的状态`,
+      });
+    } catch (error) {
+      console.error("Batch update status error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 批量分配任务
+router.put(
+  "/batch/assign",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { taskIds, assigneeId } = req.body;
+      const userId = req.user!.userId;
+
+      if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
+        return res.json({ code: 400, message: "请选择要操作的任务" });
+      }
+      if (!assigneeId) {
+        return res.json({ code: 400, message: "请选择负责人" });
+      }
+
+      // 验证指派人是否存在
+      const assignee = await prisma.user.findUnique({
+        where: { id: assigneeId },
+      });
+      if (!assignee) {
+        return res.json({ code: 400, message: "指派用户不存在" });
+      }
+
+      // 获取要更新的任务
+      const tasks = await prisma.task.findMany({
+        where: { id: { in: taskIds } },
+      });
+
+      if (tasks.length !== taskIds.length) {
+        return res.json({ code: 400, message: "部分任务不存在" });
+      }
+
+      // 批量更新
+      await prisma.task.updateMany({
+        where: { id: { in: taskIds } },
+        data: { assigneeId },
+      });
+
+      // 批量创建日志
+      await prisma.taskLog.createMany({
+        data: tasks.map((t) => ({
+          taskId: t.id,
+          userId,
+          action: "update",
+          content: `批量重新指派任务给 ${assignee.nickname || assignee.username}`,
+        })),
+      });
+
+      // 发送通知给新的负责人
+      const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+      const userName = currentUser?.nickname || currentUser?.username || "有人";
+      for (const task of tasks) {
+        if (assigneeId !== userId) {
+          await createNotification(
+            assigneeId,
+            "assign",
+            `${userName} 给你分配了新任务`,
+            task.title,
+            task.id
+          );
+        }
+      }
+
+      res.json({
+        code: 200,
+        message: `成功分配 ${taskIds.length} 个任务给 ${assignee.nickname || assignee.username}`,
+      });
+    } catch (error) {
+      console.error("Batch assign error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 批量删除任务
+router.delete(
+  "/batch",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { taskIds } = req.body;
+
+      if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
+        return res.json({ code: 400, message: "请选择要删除的任务" });
+      }
+
+      // 验证任务存在
+      const tasks = await prisma.task.findMany({
+        where: { id: { in: taskIds } },
+      });
+
+      if (tasks.length !== taskIds.length) {
+        return res.json({ code: 400, message: "部分任务不存在" });
+      }
+
+      // 批量删除
+      await prisma.task.deleteMany({
+        where: { id: { in: taskIds } },
+      });
+
+      res.json({
+        code: 200,
+        message: `成功删除 ${taskIds.length} 个任务`,
+      });
+    } catch (error) {
+      console.error("Batch delete error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
 );
 
 // 添加评论（支持@提及和附件）
@@ -631,7 +945,7 @@ router.post(
       console.error("Add comment error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 获取任务统计
@@ -784,7 +1098,7 @@ router.get(
             assigneeName: user?.nickname || user?.username || "未知",
             count: s._count,
           };
-        }),
+        })
       );
 
       const total =
@@ -816,7 +1130,7 @@ router.get(
       console.error("Get task stats error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 获取任务日志
@@ -869,7 +1183,7 @@ router.get(
       console.error("Get task logs error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
-  },
+  }
 );
 
 // 获取个人工作台数据（当前用户的任务统计）
@@ -884,7 +1198,7 @@ router.get(
       // 获取当前用户负责的任务
       const myTasks = await prisma.task.findMany({
         where: { assigneeId: userId },
-        select: { id: true, status: true, priority: true, dueDate: true },
+        select: { id: true, status: true, priority: true, dueDate: true, tags: true },
       });
 
       // 获取当前用户创建的任务
@@ -957,25 +1271,58 @@ router.get(
             overdue: myOverdue,
             createdByMe: createdTasks.length,
           },
-          myTodoTasks: myTodoTasks.map((t) => ({
-            ...t,
-            statusText: STATUS_TEXT[t.status],
-            priorityText: PRIORITY_TEXT[t.priority],
-            isOverdue:
-              !["COMPLETED", "CANCELLED"].includes(t.status) &&
-              t.dueDate !== null &&
-              new Date(t.dueDate) < now,
-          })),
-          recentCreatedTasks: recentCreatedTasks.map((t) => ({
-            ...t,
-            statusText: STATUS_TEXT[t.status],
-            priorityText: PRIORITY_TEXT[t.priority],
-          })),
-          todayOverdueTasks: todayOverdueTasks.map((t) => ({
-            ...t,
-            statusText: STATUS_TEXT[t.status],
-            priorityText: PRIORITY_TEXT[t.priority],
-          })),
+          myTodoTasks: myTodoTasks.map((t) => {
+            let parsedTags: string[] = [];
+            if (t.tags) {
+              try {
+                parsedTags = JSON.parse(t.tags);
+              } catch (e) {
+                parsedTags = [];
+              }
+            }
+            return {
+              ...t,
+              tags: parsedTags,
+              statusText: STATUS_TEXT[t.status],
+              priorityText: PRIORITY_TEXT[t.priority],
+              isOverdue:
+                !["COMPLETED", "CANCELLED"].includes(t.status) &&
+                t.dueDate !== null &&
+                new Date(t.dueDate) < now,
+            };
+          }),
+          recentCreatedTasks: recentCreatedTasks.map((t) => {
+            let parsedTags: string[] = [];
+            if (t.tags) {
+              try {
+                parsedTags = JSON.parse(t.tags);
+              } catch (e) {
+                parsedTags = [];
+              }
+            }
+            return {
+              ...t,
+              tags: parsedTags,
+              statusText: STATUS_TEXT[t.status],
+              priorityText: PRIORITY_TEXT[t.priority],
+            };
+          }),
+          todayOverdueTasks: todayOverdueTasks.map((t) => {
+            let parsedTags: string[] = [];
+            if (t.tags) {
+              try {
+                parsedTags = JSON.parse(t.tags);
+              } catch (e) {
+                parsedTags = [];
+              }
+            }
+            return {
+              ...t,
+              tags: parsedTags,
+              statusText: STATUS_TEXT[t.status],
+              priorityText: PRIORITY_TEXT[t.priority],
+            };
+          }),
         },
       });
     } catch (error) {

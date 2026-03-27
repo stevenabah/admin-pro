@@ -38,7 +38,7 @@
               @click="handleItemClick(item)"
             >
               <div class="notification-icon" :class="item.type">
-                <el-icon v-if="item.type === 'mention'"><At /></el-icon>
+                <el-icon v-if="item.type === 'mention'"><ChatDotRound /></el-icon>
                 <el-icon v-else-if="item.type === 'assign'"><User /></el-icon>
                 <el-icon v-else-if="item.type === 'comment'"><ChatDotRound /></el-icon>
                 <el-icon v-else-if="item.type === 'overdue'"><Clock /></el-icon>
@@ -75,7 +75,7 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { Bell, At, User, ChatDotRound, Clock } from "@element-plus/icons-vue";
+import { Bell, User, ChatDotRound, Clock } from "@element-plus/icons-vue";
 import {
   getNotificationList,
   getUnreadCount,

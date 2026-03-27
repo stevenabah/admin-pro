@@ -11,6 +11,24 @@
         </div>
       </template>
 
+      <!-- 批量操作工具栏 -->
+      <div v-if="selectedTasks.length > 0" class="batch-toolbar">
+        <span>已选择 {{ selectedTasks.length }} 项</span>
+        <el-dropdown @command="handleBatchCommand">
+          <el-button type="primary" size="small">
+            批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="status">批量更新状态</el-dropdown-item>
+              <el-dropdown-item command="assign">批量分配</el-dropdown-item>
+              <el-dropdown-item command="delete" divided>批量删除</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button size="small" @click="selectedTasks = []">取消选择</el-button>
+      </div>
+
       <!-- 筛选工具栏 -->
       <div class="filter-toolbar">
         <el-form :inline="true" :model="filterForm">
@@ -44,6 +62,23 @@
               />
             </el-select>
           </el-form-item>
+          <el-form-item label="标签">
+            <el-select
+              v-model="filterForm.tag"
+              placeholder="全部标签"
+              clearable
+              @change="handleFilterChange"
+            >
+              <el-option
+                v-for="tag in tagList"
+                :key="tag.id"
+                :label="tag.name"
+                :value="tag.id"
+              >
+                <span :style="{ color: tag.color }">{{ tag.name }}</span>
+              </el-option>
+            </el-select>
+          </el-form-item>
           <el-form-item label="关键词">
             <el-input
               v-model="filterForm.keyword"
@@ -62,12 +97,30 @@
       </div>
 
       <!-- 任务列表 -->
-      <el-table :data="taskList" v-loading="loading" stripe>
+      <el-table :data="taskList" v-loading="loading" stripe @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="50" />
         <el-table-column prop="title" label="任务标题" min-width="200">
           <template #default="{ row }">
             <el-link type="primary" @click="goToDetail(row.id)">{{
               row.title
             }}</el-link>
+          </template>
+        </el-table-column>
+        <el-table-column prop="tags" label="标签" width="150">
+          <template #default="{ row }">
+            <el-tag
+              v-for="tagId in row.tags?.slice(0, 2)"
+              :key="tagId"
+              :color="getTagColor(tagId)"
+              size="small"
+              style="color: #fff; margin-right: 4px;"
+            >
+              {{ getTagName(tagId) }}
+            </el-tag>
+            <el-tag v-if="row.tags?.length > 2" size="small">
+              +{{ row.tags.length - 2 }}
+            </el-tag>
+            <span v-if="!row.tags?.length" style="color: #999">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
@@ -203,6 +256,25 @@
             value-format="YYYY-MM-DD"
           />
         </el-form-item>
+        <el-form-item label="标签" prop="tags">
+          <el-select
+            v-model="taskForm.tags"
+            placeholder="请选择标签"
+            multiple
+            clearable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="tag in tagList"
+              :key="tag.id"
+              :label="tag.name"
+              :value="tag.id"
+            >
+              <span :style="{ color: tag.color, marginRight: '8px' }">●</span>
+              {{ tag.name }}
+            </el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item v-if="isEdit" label="状态" prop="status">
           <el-select
             v-model="taskForm.status"
@@ -225,6 +297,83 @@
         >
       </template>
     </el-dialog>
+
+    <!-- 批量状态更新弹窗 -->
+    <el-dialog
+      v-model="batchStatusDialogVisible"
+      title="批量更新状态"
+      width="400px"
+    >
+      <el-form-item label="新状态">
+        <el-select v-model="batchStatus" placeholder="请选择新状态" style="width: 100%">
+          <el-option
+            v-for="(config, key) in TaskStatusConfig"
+            :key="key"
+            :label="config.label"
+            :value="key"
+          />
+        </el-select>
+      </el-form-item>
+      <template #footer>
+        <el-button @click="batchStatusDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleBatchStatusUpdate" :loading="batchLoading"
+          >确定</el-button
+        >
+      </template>
+    </el-dialog>
+
+    <!-- 批量分配弹窗 -->
+    <el-dialog
+      v-model="batchAssignDialogVisible"
+      title="批量分配任务"
+      width="400px"
+    >
+      <el-form-item label="负责人">
+        <el-select v-model="batchAssigneeId" placeholder="请选择负责人" clearable style="width: 100%">
+          <el-option
+            v-for="user in userList"
+            :key="user.id"
+            :label="user.nickname || user.username"
+            :value="user.id"
+          />
+        </el-select>
+      </el-form-item>
+      <template #footer>
+        <el-button @click="batchAssignDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleBatchAssign" :loading="batchLoading"
+          >确定</el-button
+        >
+      </template>
+    </el-dialog>
+
+    <!-- 标签管理弹窗 -->
+    <el-dialog
+      v-model="tagDialogVisible"
+      title="标签管理"
+      width="500px"
+    >
+      <div class="tag-management">
+        <div class="tag-list">
+          <el-tag
+            v-for="tag in tagList"
+            :key="tag.id"
+            :color="tag.color"
+            size="large"
+            style="color: #fff; margin-right: 8px; margin-bottom: 8px;"
+            closable
+            @close="handleDeleteTag(tag.id)"
+          >
+            {{ tag.name }}
+          </el-tag>
+        </div>
+        <el-divider />
+        <div class="tag-create">
+          <el-input v-model="newTagName" placeholder="新标签名称" style="width: 200px; margin-right: 8px;" />
+          <el-color-picker v-model="newTagColor" size="small" />
+          <el-button type="primary" size="small" @click="handleCreateTag" :loading="tagLoading">添加</el-button>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -232,16 +381,20 @@
 import { ref, reactive, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Plus } from "@element-plus/icons-vue";
+import { Plus, ArrowDown } from "@element-plus/icons-vue";
 import {
   getTaskList,
   createTask,
   updateTask,
   deleteTask,
   getTaskStats,
+  batchUpdateStatus,
+  batchAssignTask,
+  batchDeleteTask,
   TaskStatusConfig,
   TaskPriorityConfig,
 } from "@/api/task";
+import { getTagList, createTag, deleteTag } from "@/api/tag";
 import type { TaskStatusType, TaskPriorityType } from "@/api/task";
 
 const router = useRouter();
@@ -254,12 +407,28 @@ const submitLoading = ref(false);
 const taskList = ref<any[]>([]);
 const userList = ref<any[]>([]);
 const formRef = ref();
+const selectedTasks = ref<any[]>([]);
+
+// 批量操作
+const batchStatusDialogVisible = ref(false);
+const batchAssignDialogVisible = ref(false);
+const batchStatus = ref<TaskStatusType>("PENDING");
+const batchAssigneeId = ref("");
+const batchLoading = ref(false);
+
+// 标签
+const tagList = ref<any[]>([]);
+const tagDialogVisible = ref(false);
+const newTagName = ref("");
+const newTagColor = ref("#409eff");
+const tagLoading = ref(false);
 
 // 筛选表单
 const filterForm = reactive({
   status: "" as TaskStatusType | "",
   priority: "" as TaskPriorityType | "",
   keyword: "",
+  tag: "",
 });
 
 // 分页
@@ -278,6 +447,7 @@ const taskForm = reactive({
   assigneeId: "",
   dueDate: "",
   status: "PENDING" as TaskStatusType,
+  tags: [] as string[],
 });
 
 // 表单验证
@@ -295,6 +465,7 @@ const fetchTaskList = async () => {
       status: filterForm.status || undefined,
       priority: filterForm.priority || undefined,
       keyword: filterForm.keyword || undefined,
+      tag: filterForm.tag || undefined,
       sortBy: "createdAt",
       sortOrder: "desc",
     };
@@ -322,6 +493,30 @@ const fetchUserList = async () => {
   }
 };
 
+// 加载标签列表
+const fetchTagList = async () => {
+  try {
+    const res = await getTagList();
+    if (res.code === 200) {
+      tagList.value = res.data;
+    }
+  } catch (error) {
+    console.error("Failed to fetch tag list:", error);
+  }
+};
+
+// 获取标签颜色
+const getTagColor = (tagId: string) => {
+  const tag = tagList.value.find((t) => t.id === tagId);
+  return tag?.color || "#409eff";
+};
+
+// 获取标签名称
+const getTagName = (tagId: string) => {
+  const tag = tagList.value.find((t) => t.id === tagId);
+  return tag?.name || "";
+};
+
 // 加载任务统计（用于Dashboard整合）
 const fetchTaskStats = async () => {
   try {
@@ -346,6 +541,7 @@ const resetFilter = () => {
   filterForm.status = "";
   filterForm.priority = "";
   filterForm.keyword = "";
+  filterForm.tag = "";
   pagination.page = 1;
   fetchTaskList();
 };
@@ -362,6 +558,112 @@ const handleSizeChange = (size: number) => {
   fetchTaskList();
 };
 
+// 选择变化
+const handleSelectionChange = (selection: any[]) => {
+  selectedTasks.value = selection;
+};
+
+// 批量操作
+const handleBatchCommand = (command: string) => {
+  if (selectedTasks.value.length === 0) {
+    ElMessage.warning("请先选择任务");
+    return;
+  }
+  switch (command) {
+    case "status":
+      batchStatus.value = "PENDING";
+      batchStatusDialogVisible.value = true;
+      break;
+    case "assign":
+      batchAssigneeId.value = "";
+      batchAssignDialogVisible.value = true;
+      break;
+    case "delete":
+      handleBatchDelete();
+      break;
+  }
+};
+
+// 批量更新状态
+const handleBatchStatusUpdate = async () => {
+  if (!batchStatus.value) {
+    ElMessage.warning("请选择新状态");
+    return;
+  }
+  batchLoading.value = true;
+  try {
+    const taskIds = selectedTasks.value.map((t) => t.id);
+    const res = await batchUpdateStatus(taskIds, batchStatus.value);
+    if (res.code === 200) {
+      ElMessage.success(res.message);
+      batchStatusDialogVisible.value = false;
+      selectedTasks.value = [];
+      fetchTaskList();
+    } else {
+      ElMessage.error(res.message || "操作失败");
+    }
+  } catch (error) {
+    console.error("Batch update status error:", error);
+    ElMessage.error("操作失败");
+  } finally {
+    batchLoading.value = false;
+  }
+};
+
+// 批量分配
+const handleBatchAssign = async () => {
+  if (!batchAssigneeId.value) {
+    ElMessage.warning("请选择负责人");
+    return;
+  }
+  batchLoading.value = true;
+  try {
+    const taskIds = selectedTasks.value.map((t) => t.id);
+    const res = await batchAssignTask(taskIds, batchAssigneeId.value);
+    if (res.code === 200) {
+      ElMessage.success(res.message);
+      batchAssignDialogVisible.value = false;
+      selectedTasks.value = [];
+      fetchTaskList();
+    } else {
+      ElMessage.error(res.message || "操作失败");
+    }
+  } catch (error) {
+    console.error("Batch assign error:", error);
+    ElMessage.error("操作失败");
+  } finally {
+    batchLoading.value = false;
+  }
+};
+
+// 批量删除
+const handleBatchDelete = () => {
+  ElMessageBox.confirm(
+    `确定要删除选中的 ${selectedTasks.value.length} 个任务吗？此操作不可恢复。`,
+    "提示",
+    {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      type: "warning",
+    }
+  ).then(async () => {
+    try {
+      const taskIds = selectedTasks.value.map((t) => t.id);
+      const res = await batchDeleteTask(taskIds);
+      if (res.code === 200) {
+        ElMessage.success(res.message);
+        selectedTasks.value = [];
+        fetchTaskList();
+      } else {
+        ElMessage.error(res.message || "删除失败");
+      }
+    } catch (error) {
+      console.error("Batch delete error:", error);
+      ElMessage.error("删除失败");
+    }
+  });
+};
+
 // 打开创建弹窗
 const openCreateDialog = () => {
   isEdit.value = false;
@@ -372,6 +674,7 @@ const openCreateDialog = () => {
   taskForm.assigneeId = "";
   taskForm.dueDate = "";
   taskForm.status = "PENDING";
+  taskForm.tags = [];
   dialogVisible.value = true;
 };
 
@@ -385,6 +688,7 @@ const openEditDialog = (row: any) => {
   taskForm.assigneeId = row.assigneeId || "";
   taskForm.dueDate = row.dueDate ? row.dueDate.split("T")[0] : "";
   taskForm.status = row.status;
+  taskForm.tags = row.tags || [];
   dialogVisible.value = true;
 };
 
@@ -401,6 +705,7 @@ const handleSubmit = async () => {
           priority: taskForm.priority,
           assigneeId: taskForm.assigneeId || undefined,
           dueDate: taskForm.dueDate || undefined,
+          tags: taskForm.tags,
         };
 
         let res;
@@ -452,6 +757,56 @@ const handleDelete = (id: string) => {
   });
 };
 
+// 创建标签
+const handleCreateTag = async () => {
+  if (!newTagName.value.trim()) {
+    ElMessage.warning("请输入标签名称");
+    return;
+  }
+  tagLoading.value = true;
+  try {
+    const res = await createTag({
+      name: newTagName.value.trim(),
+      color: newTagColor.value,
+    });
+    if (res.code === 200) {
+      ElMessage.success("标签创建成功");
+      newTagName.value = "";
+      newTagColor.value = "#409eff";
+      fetchTagList();
+    } else {
+      ElMessage.error(res.message || "创建失败");
+    }
+  } catch (error) {
+    console.error("Create tag error:", error);
+    ElMessage.error("创建失败");
+  } finally {
+    tagLoading.value = false;
+  }
+};
+
+// 删除标签
+const handleDeleteTag = (id: string) => {
+  ElMessageBox.confirm("确定要删除该标签吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  }).then(async () => {
+    try {
+      const res = await deleteTag(id);
+      if (res.code === 200) {
+        ElMessage.success("删除成功");
+        fetchTagList();
+      } else {
+        ElMessage.error(res.message || "删除失败");
+      }
+    } catch (error) {
+      console.error("Delete tag error:", error);
+      ElMessage.error("删除失败");
+    }
+  });
+};
+
 // 跳转到详情页
 const goToDetail = (id: string) => {
   router.push(`/task/${id}`);
@@ -471,6 +826,7 @@ defineExpose({
 onMounted(() => {
   fetchTaskList();
   fetchUserList();
+  fetchTagList();
 });
 </script>
 
@@ -489,9 +845,36 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
+.batch-toolbar {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .pagination-wrapper {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+}
+
+.tag-management {
+  padding: 10px 0;
+}
+
+.tag-list {
+  min-height: 60px;
+  padding: 10px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.tag-create {
+  display: flex;
+  align-items: center;
+  margin-top: 16px;
 }
 </style>
