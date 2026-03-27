@@ -3,6 +3,7 @@ import prisma from "../lib/prisma.js";
 import { authMiddleware, AuthRequest } from "../middleware/auth.js";
 import { checkPermission } from "../middleware/rbac.js";
 import { createNotification } from "./notifications.js";
+import ExcelJS from "exceljs";
 
 const router = Router();
 
@@ -208,6 +209,151 @@ router.get(
       });
     } catch (error) {
       console.error("Get board error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 导出任务（支持Excel和CSV格式）
+router.get(
+  "/export",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { format = "xlsx", status, priority, assigneeId, keyword, tag } = req.query as any;
+
+      // 构建查询条件（与列表API一致）
+      const where: any = {};
+      if (status) {
+        where.status = status;
+      }
+      if (priority) {
+        where.priority = priority;
+      }
+      if (assigneeId) {
+        where.assigneeId = assigneeId;
+      }
+      if (keyword) {
+        where.OR = [
+          { title: { contains: keyword } },
+          { description: { contains: keyword } },
+        ];
+      }
+      if (tag) {
+        where.tags = { contains: tag };
+      }
+
+      // 获取所有匹配的任务（不分页）
+      const tasks = await prisma.task.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        include: {
+          assignee: {
+            select: { id: true, username: true, nickname: true },
+          },
+          creator: {
+            select: { id: true, username: true, nickname: true },
+          },
+        },
+      });
+
+      // 获取标签列表用于名称映射
+      const tags = await prisma.tag.findMany();
+      const tagMap: Record<string, string> = {};
+      tags.forEach((t) => {
+        tagMap[t.id] = t.name;
+      });
+
+      // 格式化任务数据
+      const formattedTasks = tasks.map((t) => {
+        let parsedTags: string[] = [];
+        if (t.tags) {
+          try {
+            parsedTags = JSON.parse(t.tags);
+          } catch (e) {
+            parsedTags = [];
+          }
+        }
+        const tagNames = parsedTags.map((tagId) => tagMap[tagId] || tagId).join(", ");
+
+        return {
+          id: t.id,
+          title: t.title,
+          description: t.description || "",
+          status: STATUS_TEXT[t.status] || t.status,
+          priority: PRIORITY_TEXT[t.priority] || t.priority,
+          assignee: t.assignee ? t.assignee.nickname || t.assignee.username : "",
+          creator: t.creator ? t.creator.nickname || t.creator.username : "",
+          dueDate: t.dueDate ? new Date(t.dueDate).toLocaleDateString("zh-CN") : "",
+          tags: tagNames,
+          createdAt: t.createdAt.toLocaleDateString("zh-CN"),
+          updatedAt: t.updatedAt.toLocaleDateString("zh-CN"),
+        };
+      });
+
+      // 生成Excel文件
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet("任务列表");
+
+      // 设置列标题
+      worksheet.columns = [
+        { header: "ID", key: "id", width: 36 },
+        { header: "任务标题", key: "title", width: 30 },
+        { header: "任务描述", key: "description", width: 40 },
+        { header: "状态", key: "status", width: 10 },
+        { header: "优先级", key: "priority", width: 10 },
+        { header: "负责人", key: "assignee", width: 12 },
+        { header: "创建人", key: "creator", width: 12 },
+        { header: "截止日期", key: "dueDate", width: 12 },
+        { header: "标签", key: "tags", width: 20 },
+        { header: "创建时间", key: "createdAt", width: 12 },
+        { header: "更新时间", key: "updatedAt", width: 12 },
+      ];
+
+      // 添加数据行
+      formattedTasks.forEach((task) => {
+        worksheet.addRow(task);
+      });
+
+      // 设置响应头
+      const fileName = `tasks_export_${new Date().toISOString().split("T")[0]}`;
+
+      if (format === "csv") {
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}.csv"`);
+
+        // CSV格式输出
+        const csvRows: string[] = [];
+        csvRows.push("ID,任务标题,任务描述,状态,优先级,负责人,创建人,截止日期,标签,创建时间,更新时间");
+
+        formattedTasks.forEach((task) => {
+          const row = [
+            task.id,
+            `"${(task.title || "").replace(/"/g, '""')}"`,
+            `"${(task.description || "").replace(/"/g, '""')}"`,
+            task.status,
+            task.priority,
+            task.assignee,
+            task.creator,
+            task.dueDate,
+            `"${(task.tags || "").replace(/"/g, '""')}"`,
+            task.createdAt,
+            task.updatedAt,
+          ].join(",");
+          csvRows.push(row);
+        });
+
+        res.send("\uFEFF" + csvRows.join("\n")); // BOM for Excel UTF-8
+      } else {
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}.xlsx"`);
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        res.send(buffer);
+      }
+    } catch (error) {
+      console.error("Export tasks error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
   }
@@ -1327,6 +1473,87 @@ router.get(
       });
     } catch (error) {
       console.error("Get my dashboard error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 获取甘特图数据
+router.get(
+  "/gantt",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { assigneeId, startDate, endDate } = req.query as any;
+
+      // 构建查询条件
+      const where: any = {};
+      if (assigneeId) {
+        where.assigneeId = assigneeId;
+      }
+      if (startDate) {
+        where.createdAt = { gte: new Date(startDate) };
+      }
+      if (endDate) {
+        where.updatedAt = { ...where.updatedAt, lte: new Date(endDate) };
+      }
+
+      const tasks = await prisma.task.findMany({
+        where,
+        orderBy: { createdAt: "asc" },
+        include: {
+          assignee: {
+            select: { id: true, username: true, nickname: true },
+          },
+        },
+      });
+
+      // 计算进度（基于状态）
+      const calculateProgress = (status: string): number => {
+        switch (status) {
+          case "PENDING": return 0;
+          case "IN_PROGRESS": return 50;
+          case "REVIEW": return 80;
+          case "COMPLETED": return 100;
+          case "CANCELLED": return 0;
+          default: return 0;
+        }
+      };
+
+      // 映射为甘特图数据格式
+      const ganttData = tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        startDate: task.createdAt.toISOString().split("T")[0],
+        endDate: task.dueDate ? new Date(task.dueDate).toISOString().split("T")[0] : task.updatedAt.toISOString().split("T")[0],
+        progress: calculateProgress(task.status),
+        assigneeId: task.assigneeId,
+        assigneeName: task.assignee ? task.assignee.nickname || task.assignee.username : "",
+      }));
+
+      // 按人员分组
+      const tasksByAssignee: Record<string, typeof ganttData> = {};
+      ganttData.forEach((task) => {
+        const key = task.assigneeId || "unassigned";
+        if (!tasksByAssignee[key]) {
+          tasksByAssignee[key] = [];
+        }
+        tasksByAssignee[key].push(task);
+      });
+
+      res.json({
+        code: 200,
+        data: {
+          tasks: ganttData,
+          tasksByAssignee,
+          total: ganttData.length,
+        },
+      });
+    } catch (error) {
+      console.error("Get gantt data error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
   }

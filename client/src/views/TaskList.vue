@@ -4,10 +4,25 @@
       <template #header>
         <div class="card-header">
           <span>任务管理</span>
-          <el-button type="primary" @click="openCreateDialog">
-            <el-icon><Plus /></el-icon>
-            新建任务
-          </el-button>
+          <div class="header-actions">
+            <el-dropdown @command="handleExport">
+              <el-button type="success">
+                <el-icon><Download /></el-icon>
+                导出
+                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="xlsx">导出为 Excel</el-dropdown-item>
+                  <el-dropdown-item command="csv">导出为 CSV</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button type="primary" @click="openCreateDialog">
+              <el-icon><Plus /></el-icon>
+              新建任务
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -381,7 +396,7 @@
 import { ref, reactive, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Plus, ArrowDown } from "@element-plus/icons-vue";
+import { Plus, ArrowDown, Download } from "@element-plus/icons-vue";
 import {
   getTaskList,
   createTask,
@@ -391,6 +406,7 @@ import {
   batchUpdateStatus,
   batchAssignTask,
   batchDeleteTask,
+  exportTasks,
   TaskStatusConfig,
   TaskPriorityConfig,
 } from "@/api/task";
@@ -807,6 +823,39 @@ const handleDeleteTag = (id: string) => {
   });
 };
 
+// 导出任务
+const handleExport = async (format: string) => {
+  try {
+    ElMessage.info("正在导出任务，请稍候...");
+    const params: any = {
+      format,
+    };
+    // 带上当前筛选条件
+    if (filterForm.status) params.status = filterForm.status;
+    if (filterForm.priority) params.priority = filterForm.priority;
+    if (filterForm.keyword) params.keyword = filterForm.keyword;
+    if (filterForm.tag) params.tag = filterForm.tag;
+
+    const res = await exportTasks(params);
+
+    // 创建下载链接
+    const blob = new Blob([res], { type: format === "csv" ? "text/csv;charset=utf-8;" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `tasks_export_${new Date().toISOString().split("T")[0]}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    ElMessage.success("导出成功");
+  } catch (error) {
+    console.error("Export error:", error);
+    ElMessage.error("导出失败");
+  }
+};
+
 // 跳转到详情页
 const goToDetail = (id: string) => {
   router.push(`/task/${id}`);
@@ -839,6 +888,11 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .filter-toolbar {

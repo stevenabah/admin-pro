@@ -689,4 +689,199 @@ router.get(
   },
 )
 
+// 标签分布统计API - 按标签维度统计任务
+router.get(
+  '/tag-distribution',
+  authMiddleware,
+  async (req: AuthRequest, res) => {
+    try {
+      const { range = 'month', startDate, endDate } = req.query as any
+      const timeRange = getTimeRangeDate(range, startDate, endDate)
+
+      // 获取所有标签
+      const tags = await prisma.tag.findMany({
+        orderBy: { name: 'asc' }
+      })
+
+      // 获取时间范围内的所有任务
+      const tasks = await prisma.task.findMany({
+        where: {
+          createdAt: {
+            gte: timeRange.start,
+            lte: timeRange.end,
+          },
+        },
+        select: {
+          id: true,
+          tags: true,
+          status: true,
+        },
+      })
+
+      // 统计每个标签的任务数
+      const tagDistribution = await Promise.all(
+        tags.map(async (tag) => {
+          // 统计包含此标签的任务
+          const tagTasks = tasks.filter((t) => {
+            if (!t.tags) return false;
+            try {
+              const tagIds = JSON.parse(t.tags);
+              return tagIds.includes(tag.id);
+            } catch {
+              return false;
+            }
+          });
+
+          // 统计各状态数量
+          const statusBreakdown = {
+            pending: tagTasks.filter((t) => t.status === 'PENDING').length,
+            inProgress: tagTasks.filter((t) => t.status === 'IN_PROGRESS').length,
+            review: tagTasks.filter((t) => t.status === 'REVIEW').length,
+            completed: tagTasks.filter((t) => t.status === 'COMPLETED').length,
+            cancelled: tagTasks.filter((t) => t.status === 'CANCELLED').length,
+          };
+
+          return {
+            tagId: tag.id,
+            tagName: tag.name,
+            tagColor: tag.color,
+            total: tagTasks.length,
+            ...statusBreakdown,
+          };
+        })
+      );
+
+      // 按任务数排序
+      tagDistribution.sort((a, b) => b.total - a.total);
+
+      // 汇总统计
+      const summary = {
+        totalTags: tags.length,
+        totalTasks: tasks.length,
+        avgTasksPerTag: tags.length > 0 ? Math.round(tasks.length / tags.length) : 0,
+      };
+
+      res.json({
+        code: 200,
+        data: {
+          range,
+          startDate: timeRange.start.toISOString(),
+          endDate: timeRange.end.toISOString(),
+          summary,
+          tagDistribution,
+        },
+      })
+    } catch (error) {
+      console.error('Get tag distribution error:', error)
+      res.json({ code: 500, message: '服务器错误' })
+    }
+  },
+)
+
+// 团队工作量对比API - 支持按周/月筛选
+router.get(
+  '/workload-comparison',
+  authMiddleware,
+  async (req: AuthRequest, res) => {
+    try {
+      const { range = 'month', startDate, endDate } = req.query as any
+      const timeRange = getTimeRangeDate(range, startDate, endDate)
+
+      // 获取所有用户及其任务
+      const users = await prisma.user.findMany({
+        include: {
+          assignedTasks: {
+            where: {
+              createdAt: {
+                gte: timeRange.start,
+                lte: timeRange.end,
+              },
+            },
+            select: {
+              id: true,
+              status: true,
+              createdAt: true,
+              updatedAt: true,
+              dueDate: true,
+            },
+          },
+        },
+      })
+
+      const now = new Date()
+
+      // 按周统计工作量
+      const weekStart = new Date(timeRange.start)
+      const weeks: string[] = []
+      const weekLabels: string[] = []
+
+      // 生成周标签
+      let currentWeekStart = new Date(weekStart)
+      while (currentWeekStart <= timeRange.end) {
+        const weekKey = currentWeekStart.toISOString().split('T')[0]
+        weeks.push(weekKey)
+        weekLabels.push(`${currentWeekStart.getMonth() + 1}/${currentWeekStart.getDate()}`)
+        currentWeekStart.setDate(currentWeekStart.getDate() + 7)
+      }
+
+      // 统计每个用户每周的工作量
+      const workloadComparison = await Promise.all(
+        users.map(async (user) => {
+          const weeklyData = weeks.map((weekStartStr, index) => {
+            const weekEnd = new Date(weekStartStr)
+            weekEnd.setDate(weekEnd.getDate() + 7)
+
+            const tasksThisWeek = user.assignedTasks.filter((t) => {
+              const createdAt = new Date(t.createdAt)
+              return createdAt >= new Date(weekStartStr) && createdAt < weekEnd
+            })
+
+            return {
+              week: weekLabels[index],
+              created: tasksThisWeek.length,
+              completed: tasksThisWeek.filter((t) => t.status === 'COMPLETED').length,
+              inProgress: tasksThisWeek.filter((t) => ['IN_PROGRESS', 'REVIEW'].includes(t.status)).length,
+            }
+          })
+
+          // 计算逾期任务数（整个时间段内）
+          const overdueCount = user.assignedTasks.filter(
+            (t) =>
+              !['COMPLETED', 'CANCELLED'].includes(t.status) &&
+              t.dueDate &&
+              new Date(t.dueDate) < now
+          ).length
+
+          return {
+            userId: user.id,
+            username: user.username,
+            nickname: user.nickname || user.username,
+            weeklyData,
+            totalCreated: user.assignedTasks.length,
+            totalCompleted: user.assignedTasks.filter((t) => t.status === 'COMPLETED').length,
+            overdueCount,
+          }
+        })
+      )
+
+      // 按总完成任务数排序
+      workloadComparison.sort((a, b) => b.totalCompleted - a.totalCompleted)
+
+      res.json({
+        code: 200,
+        data: {
+          range,
+          startDate: timeRange.start.toISOString(),
+          endDate: timeRange.end.toISOString(),
+          weeks: weekLabels,
+          users: workloadComparison,
+        },
+      })
+    } catch (error) {
+      console.error('Get workload comparison error:', error)
+      res.json({ code: 500, message: '服务器错误' })
+    }
+  },
+)
+
 export default router

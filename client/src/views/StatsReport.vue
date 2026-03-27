@@ -132,7 +132,7 @@
       </el-col>
     </el-row>
 
-    <!-- 第四行：任务状态分布 -->
+    <!-- 第四行：任务状态分布和标签分布 -->
     <el-row :gutter="20" style="margin-top: 20px">
       <el-col :span="12">
         <el-card>
@@ -145,9 +145,27 @@
       <el-col :span="12">
         <el-card>
           <template #header>
-            <span>任务类型分布</span>
+            <span>标签分布</span>
           </template>
-          <v-chart :option="categoryChart" style="height: 300px" />
+          <v-chart :option="tagChart" style="height: 300px" />
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 第五行：团队工作量对比（支持按周/月筛选） -->
+    <el-row :gutter="20" style="margin-top: 20px">
+      <el-col :span="24">
+        <el-card>
+          <template #header>
+            <div class="card-header">
+              <span>团队工作量对比</span>
+              <el-radio-group v-model="workloadViewMode" size="small" @change="handleWorkloadViewModeChange">
+                <el-radio-button value="week">按周</el-radio-button>
+                <el-radio-button value="month">按月</el-radio-button>
+              </el-radio-group>
+            </div>
+          </template>
+          <v-chart :option="workloadComparisonChart" style="height: 350px" />
         </el-card>
       </el-col>
     </el-row>
@@ -166,7 +184,7 @@ import {
   DataZoomComponent,
 } from "echarts/components";
 import VChart from "vue-echarts";
-import { api } from "@/api/task";
+import { api, getTagDistribution, getWorkloadComparison } from "@/api/task";
 
 use([
   CanvasRenderer,
@@ -183,6 +201,7 @@ use([
 const timeRange = ref("month");
 const customDateRange = ref<[Date, Date] | null>(null);
 const chartMetric = ref("count");
+const workloadViewMode = ref("month");
 
 // 关键指标
 const metrics = reactive({
@@ -201,7 +220,9 @@ const efficiencyData = ref<{ date: string; count: number; duration: number }[]>(
 const workloadData = ref<{ name: string; value: number }[]>([]);
 const priorityData = ref<{ name: string; value: number; itemStyle: { color: string } }[]>([]);
 const statusData = ref<{ name: string; value: number; itemStyle: { color: string } }[]>([]);
-const categoryData = ref<{ name: string; value: number }[]>([]);
+const tagData = ref<{ tagId: string; tagName: string; tagColor: string; total: number; itemStyle: { color: string } }[]>([]);
+const workloadComparisonData = ref<{ userId: string; nickname: string; weeklyData: { week: string; created: number; completed: number }[] }[]>([]);
+const workloadWeeks = ref<string[]>([]);
 
 // 计算图表配置
 const efficiencyChart = computed(() => ({
@@ -362,42 +383,142 @@ const statusChart = computed(() => ({
   ],
 }));
 
-const categoryChart = computed(() => ({
+// 标签分布图表
+const tagChart = computed(() => ({
   tooltip: {
-    trigger: "axis",
-    axisPointer: { type: "shadow" },
+    trigger: "item",
+    formatter: (params: any) => {
+      return `${params.name}<br/>任务数: ${params.value} (${params.percent}%)`;
+    },
   },
-  grid: {
-    left: "3%",
-    right: "4%",
-    bottom: "3%",
-    containLabel: true,
-  },
-  xAxis: {
-    type: "category",
-    data: categoryData.value.map((item) => item.name),
-    axisLabel: { rotate: 30 },
-  },
-  yAxis: {
-    type: "value",
-    name: "任务数",
+  legend: {
+    orient: "vertical",
+    left: "left",
   },
   series: [
     {
-      name: "任务数",
-      type: "bar",
-      data: categoryData.value.map((item) => item.value),
+      name: "标签分布",
+      type: "pie",
+      radius: ["40%", "70%"],
+      avoidLabelOverlap: false,
       itemStyle: {
-        color: "#409eff",
-        borderRadius: [4, 4, 0, 0],
+        borderRadius: 10,
+        borderColor: "#fff",
+        borderWidth: 2,
       },
       label: {
         show: true,
-        position: "top",
+        formatter: "{b}: {c}",
       },
+      emphasis: {
+        label: {
+          show: true,
+          fontSize: 14,
+          fontWeight: "bold",
+        },
+      },
+      data: tagData.value,
     },
   ],
 }));
+
+// 团队工作量对比图表（支持按周/月）
+const workloadComparisonChart = computed(() => {
+  // 获取所有用户和周数据
+  const users = workloadComparisonData.value;
+  const weeks = workloadWeeks.value;
+
+  // 构建堆叠柱状图数据
+  const seriesData = users.slice(0, 5).map((user) => ({
+    name: user.nickname,
+    type: "bar" as const,
+    stack: "total",
+    data: user.weeklyData.map((w) => w.completed),
+    itemStyle: {
+      borderRadius: [0, 0, 0, 0],
+    },
+  }));
+
+  // 如果是按月视图，显示完成数的堆叠
+  if (workloadViewMode.value === "month") {
+    // 按月汇总
+    const monthlyData: Record<string, number> = {};
+    users.forEach((user) => {
+      user.weeklyData.forEach((w, i) => {
+        const month = weeks[i]?.split("/")[0] || "未知";
+        if (!monthlyData[month]) monthlyData[month] = 0;
+        monthlyData[month] += w.completed;
+      });
+    });
+
+    return {
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+      },
+      legend: {
+        data: users.slice(0, 5).map((u) => u.nickname),
+        bottom: 0,
+      },
+      grid: {
+        left: "3%",
+        right: "4%",
+        bottom: "15%",
+        containLabel: true,
+      },
+      xAxis: {
+        type: "category",
+        data: Object.keys(monthlyData),
+        axisLabel: { rotate: 30 },
+      },
+      yAxis: {
+        type: "value",
+        name: "完成任务数",
+      },
+      series: [
+        {
+          name: "完成任务数",
+          type: "bar",
+          data: Object.values(monthlyData),
+          itemStyle: { color: "#409eff", borderRadius: [4, 4, 0, 0] },
+          label: { show: true, position: "top" },
+        },
+      ],
+    };
+  }
+
+  // 按周视图
+  return {
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+    },
+    legend: {
+      data: users.slice(0, 5).map((u) => u.nickname),
+      bottom: 0,
+    },
+    grid: {
+      left: "3%",
+      right: "4%",
+      bottom: "15%",
+      containLabel: true,
+    },
+    xAxis: {
+      type: "category",
+      data: weeks,
+      axisLabel: { rotate: 30 },
+    },
+    yAxis: {
+      type: "value",
+      name: "完成任务数",
+    },
+    series: seriesData.length > 0 ? seriesData : [{
+      name: "无数据",
+      type: "bar" as const,
+      data: [],
+    }],
+  };
+});
 
 // 获取统计数据
 const fetchStats = async () => {
@@ -428,12 +549,102 @@ const fetchStats = async () => {
       workloadData.value = data.charts.workloadDistribution;
       priorityData.value = data.charts.priorityDistribution;
       statusData.value = data.charts.statusDistribution;
-      categoryData.value = data.charts.categoryDistribution;
     }
+
+    // 获取标签分布数据
+    await fetchTagDistribution();
+
+    // 获取工作量对比数据
+    await fetchWorkloadComparison();
   } catch (error) {
     console.error("Failed to fetch stats:", error);
     // 使用模拟数据
     initMockData();
+  }
+};
+
+// 获取标签分布统计
+const fetchTagDistribution = async () => {
+  try {
+    const params: Record<string, any> = { range: timeRange.value };
+    if (timeRange.value === "custom" && customDateRange.value) {
+      params.startDate = customDateRange.value[0].toISOString().split("T")[0];
+      params.endDate = customDateRange.value[1].toISOString().split("T")[0];
+    }
+
+    const res = await getTagDistribution(params);
+    if (res.code === 200) {
+      tagData.value = res.data.tagDistribution.map((tag: any) => ({
+        tagId: tag.tagId,
+        tagName: tag.tagName,
+        tagColor: tag.tagColor,
+        total: tag.total,
+        itemStyle: { color: tag.tagColor },
+      }));
+    }
+  } catch (error) {
+    console.error("Failed to fetch tag distribution:", error);
+    // 使用模拟数据
+    tagData.value = [
+      { tagId: "1", tagName: "功能开发", tagColor: "#409eff", total: 45, itemStyle: { color: "#409eff" } },
+      { tagId: "2", tagName: "Bug修复", tagColor: "#f56c6c", total: 23, itemStyle: { color: "#f56c6c" } },
+      { tagId: "3", tagName: "文档编写", tagColor: "#67c23a", total: 15, itemStyle: { color: "#67c23a" } },
+      { tagId: "4", tagName: "代码优化", tagColor: "#e6a23c", total: 20, itemStyle: { color: "#e6a23c" } },
+      { tagId: "5", tagName: "测试验证", tagColor: "#909399", total: 25, itemStyle: { color: "#909399" } },
+    ];
+  }
+};
+
+// 获取工作量对比数据
+const fetchWorkloadComparison = async () => {
+  try {
+    const params: Record<string, any> = { range: workloadViewMode.value };
+    if (timeRange.value === "custom" && customDateRange.value) {
+      params.startDate = customDateRange.value[0].toISOString().split("T")[0];
+      params.endDate = customDateRange.value[1].toISOString().split("T")[0];
+    }
+
+    const res = await getWorkloadComparison(params);
+    if (res.code === 200) {
+      workloadComparisonData.value = res.data.users;
+      workloadWeeks.value = res.data.weeks || [];
+    }
+  } catch (error) {
+    console.error("Failed to fetch workload comparison:", error);
+    // 使用模拟数据
+    workloadWeeks.value = ["第1周", "第2周", "第3周", "第4周"];
+    workloadComparisonData.value = [
+      {
+        userId: "1",
+        nickname: "张三",
+        weeklyData: [
+          { week: "第1周", created: 5, completed: 3 },
+          { week: "第2周", created: 7, completed: 5 },
+          { week: "第3周", created: 4, completed: 4 },
+          { week: "第4周", created: 6, completed: 5 },
+        ],
+      },
+      {
+        userId: "2",
+        nickname: "李四",
+        weeklyData: [
+          { week: "第1周", created: 3, completed: 2 },
+          { week: "第2周", created: 5, completed: 4 },
+          { week: "第3周", created: 6, completed: 5 },
+          { week: "第4周", created: 4, completed: 4 },
+        ],
+      },
+      {
+        userId: "3",
+        nickname: "王五",
+        weeklyData: [
+          { week: "第1周", created: 6, completed: 4 },
+          { week: "第2周", created: 8, completed: 6 },
+          { week: "第3周", created: 5, completed: 5 },
+          { week: "第4周", created: 7, completed: 6 },
+        ],
+      },
+    ];
   }
 };
 
@@ -475,14 +686,6 @@ const initMockData = () => {
     { name: "待处理", value: 12, itemStyle: { color: "#909399" } },
     { name: "已逾期", value: 5, itemStyle: { color: "#f56c6c" } },
   ];
-
-  categoryData.value = [
-    { name: "功能开发", value: 45 },
-    { name: "Bug修复", value: 23 },
-    { name: "文档编写", value: 15 },
-    { name: "代码优化", value: 20 },
-    { name: "测试验证", value: 25 },
-  ];
 };
 
 // 时间范围变化
@@ -497,6 +700,11 @@ const handleCustomDateChange = () => {
   if (customDateRange.value) {
     fetchStats();
   }
+};
+
+// 工作量对比视图模式变化（按周/按月）
+const handleWorkloadViewModeChange = () => {
+  fetchWorkloadComparison();
 };
 
 // 刷新数据

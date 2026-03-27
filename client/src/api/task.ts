@@ -181,4 +181,34 @@ export const getMyDashboard = () => {
   return api.get("/tasks/my/dashboard");
 };
 
+// 导出任务
+export const exportTasks = (params: {
+  format?: "xlsx" | "csv";
+  status?: string;
+  priority?: string;
+  assigneeId?: string;
+  keyword?: string;
+  tag?: string;
+}) => {
+  return api.get("/tasks/export", { params, responseType: "blob" });
+};
+
+// 获取标签分布统计
+export const getTagDistribution = (params?: {
+  range?: string;
+  startDate?: string;
+  endDate?: string;
+}) => {
+  return api.get("/tasks/stats/tag-distribution", { params });
+};
+
+// 获取工作量对比（支持按周/月筛选）
+export const getWorkloadComparison = (params?: {
+  range?: string;
+  startDate?: string;
+  endDate?: string;
+}) => {
+  return api.get("/tasks/stats/workload-comparison", { params });
+};
+
 export { api };
