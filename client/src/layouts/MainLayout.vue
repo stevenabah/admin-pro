@@ -58,6 +58,14 @@
           <el-menu-item index="/task">任务列表</el-menu-item>
           <el-menu-item index="/task/board">任务看板</el-menu-item>
         </el-sub-menu>
+        <el-menu-item index="/stats">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>统计报表</span>
+        </el-menu-item>
+        <el-menu-item index="/gantt">
+          <el-icon><TrendCharts /></el-icon>
+          <span>甘特图</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -141,6 +149,7 @@ import {
   SwitchButton,
   ChatDotRound,
   DataAnalysis,
+  TrendCharts,
 } from "@element-plus/icons-vue";
 
 const route = useRoute();

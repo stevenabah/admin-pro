@@ -36,7 +36,7 @@ app.use("/api/permissions", permissionRoutes);
 app.use("/api/files", fileRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/data", dataRoutes);
-app.use("/api/stats", statsRoutes);
+app.use("/api/tasks/stats", statsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/tasks", taskRoutes);
 

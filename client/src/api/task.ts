@@ -134,4 +134,18 @@ export const getTaskStats = () => {
   return api.get("/tasks/stats/summary");
 };
 
+// 获取任务统计报表
+export const getTaskStatsReport = (params: {
+  range?: string;
+  startDate?: string;
+  endDate?: string;
+}) => {
+  return api.get("/tasks/stats/report", { params });
+};
+
+// 获取甘特图数据
+export const getGanttData = () => {
+  return api.get("/tasks/gantt");
+};
+
 export { api };
