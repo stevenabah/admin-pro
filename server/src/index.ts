@@ -13,6 +13,7 @@ import mediaRoutes from "./routes/media.js";
 import dataRoutes from "./routes/data.js";
 import statsRoutes from "./routes/stats.js";
 import aiRoutes from "./routes/ai.js";
+import taskRoutes from "./routes/tasks.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +38,7 @@ app.use("/api/media", mediaRoutes);
 app.use("/api/data", dataRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/tasks", taskRoutes);
 
 // 健康检查
 app.get("/api/health", (req, res) => {

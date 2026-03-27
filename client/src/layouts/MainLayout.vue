@@ -50,6 +50,14 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>自然语言查询</span>
         </el-menu-item>
+        <el-sub-menu index="/task">
+          <template #title>
+            <el-icon><List /></el-icon>
+            <span>任务管理</span>
+          </template>
+          <el-menu-item index="/task">任务列表</el-menu-item>
+          <el-menu-item index="/task/board">任务看板</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
     <el-container>
@@ -151,6 +159,7 @@ const permCodeMap: Record<string, string> = {
   "/file": "fileManage",
   "/media": "mediaManage",
   "/data": "dataManage",
+  "/task": "taskManage",
 };
 
 const hasMenuPermission = (path: string) => {

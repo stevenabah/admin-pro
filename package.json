@@ -13,7 +13,16 @@
     "build": "npm run build -w client",
     "install:all": "npm install && npm install -w client && npm install -w server",
     "prepare": "husky",
-    "commit": "git-cz"
+    "commit": "git-cz",
+    "test": "npm run test:api",
+    "test:api": "tsx tests/api/api.test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:all": "npm run test:unit && npm run test:api"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",

@@ -1,0 +1,73 @@
+# ============================================
+# Docker Ignore File
+# ============================================
+
+# Dependencies
+node_modules
+npm-debug.log
+pnpm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Build outputs
+dist
+build
+*.tsbuildinfo
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment files
+.env
+.env.*
+.env.local
+*.env
+
+# Documentation
+*.md
+docs
+LICENSE
+README*
+
+# Testing
+coverage
+.nyc_output
+*.test.js
+*.spec.js
+__tests__
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Development
+*.log
+logs
+*.pid
+*.seed
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp
+temp
+*.tmp
+.cache

@@ -1,0 +1,57 @@
+# ============================================
+# GitHub Actions - Database Migration
+# ============================================
+
+name: Database Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Migration action'
+        required: true
+        default: 'up'
+        type: choice
+        options:
+          - up
+          - down
+          - seed
+          - reset
+
+jobs:
+  migrate:
+    name: Run Database Migration
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter server db:generate
+
+      - name: Setup PostgreSQL
+        uses: gaurav-nelson/github-action-prisma@v1
+        with:
+          schema: server/prisma/schema.prisma
+
+      - name: Run migration
+        if: github.event.inputs.action == 'up'
+        run: pnpm --filter server db:push
+
+      - name: Run seed
+        if: github.event.inputs.action == 'seed'
+        run: pnpm --filter server db:seed

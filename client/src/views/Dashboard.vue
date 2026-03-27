@@ -48,6 +48,54 @@
     </el-row>
 
     <el-row :gutter="20" style="margin-top: 20px">
+      <el-col :span="6">
+        <el-card
+          class="stat-card"
+          @click="$router.push('/task')"
+          style="cursor: pointer"
+        >
+          <div class="stat-icon" style="background: #909399">
+            <el-icon :size="30"><List /></el-icon>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value">{{ taskStats.total || 0 }}</div>
+            <div class="stat-label">任务总数</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card
+          class="stat-card"
+          @click="$router.push('/task')"
+          style="cursor: pointer"
+        >
+          <div class="stat-icon" style="background: #409eff">
+            <el-icon :size="30"><Clock /></el-icon>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value">{{ taskStats.inProgress || 0 }}</div>
+            <div class="stat-label">进行中</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card
+          class="stat-card"
+          @click="$router.push('/task')"
+          style="cursor: pointer"
+        >
+          <div class="stat-icon" style="background: #67c23a">
+            <el-icon :size="30"><CircleCheck /></el-icon>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value">{{ taskStats.completed || 0 }}</div>
+            <div class="stat-label">已完成</div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" style="margin-top: 20px">
       <el-col :span="12">
         <el-card>
           <template #header>
@@ -108,15 +156,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, PieChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
-import VChart from 'vue-echarts'
-import { api } from '@/stores/user'
+import { ref, onMounted } from "vue";
+import { use } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
+import { LineChart, PieChart } from "echarts/charts";
+import {
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+} from "echarts/components";
+import VChart from "vue-echarts";
+import { api } from "@/stores/user";
+import { getTaskStats } from "@/api/task";
 
-use([CanvasRenderer, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent])
+use([
+  CanvasRenderer,
+  LineChart,
+  PieChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+]);
 
 const stats = ref<any>({
   userCount: 0,
@@ -124,79 +184,93 @@ const stats = ref<any>({
   fileCount: 0,
   mediaCount: 0,
   recentUsers: [],
-  recentFiles: []
-})
+  recentFiles: [],
+});
+
+const taskStats = ref<any>({
+  total: 0,
+  inProgress: 0,
+  completed: 0,
+});
 
 const chartData = ref<any>({
   visitChart: { xAxis: [], series: [] },
-  categoryChart: []
-})
+  categoryChart: [],
+});
 
-const lineChart = ref({})
-const pieChart = ref({})
+const lineChart = ref({});
+const pieChart = ref({});
 
 const fetchData = async () => {
-  const [statsRes, chartRes] = await Promise.all([
-    api.get('/stats/dashboard'),
-    api.get('/stats/chart-data')
-  ])
+  const [statsRes, chartRes, taskStatsRes] = await Promise.all([
+    api.get("/stats/dashboard"),
+    api.get("/stats/chart-data"),
+    getTaskStats(),
+  ]);
 
   if (statsRes.code === 200) {
-    stats.value = statsRes.data
+    stats.value = statsRes.data;
   }
   if (chartRes.code === 200) {
-    chartData.value = chartRes.data
-    initCharts()
+    chartData.value = chartRes.data;
+    initCharts();
   }
-}
+  if (taskStatsRes.code === 200) {
+    taskStats.value = taskStatsRes.data;
+  }
+};
 
 const initCharts = () => {
   lineChart.value = {
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: "axis" },
     xAxis: {
-      type: 'category',
-      data: chartData.value.visitChart.xAxis
+      type: "category",
+      data: chartData.value.visitChart.xAxis,
     },
-    yAxis: { type: 'value' },
-    series: [{
-      data: chartData.value.visitChart.series,
-      type: 'line',
-      smooth: true,
-      areaStyle: { opacity: 0.3 },
-      itemStyle: { color: '#409eff' }
-    }]
-  }
+    yAxis: { type: "value" },
+    series: [
+      {
+        data: chartData.value.visitChart.series,
+        type: "line",
+        smooth: true,
+        areaStyle: { opacity: 0.3 },
+        itemStyle: { color: "#409eff" },
+      },
+    ],
+  };
 
   pieChart.value = {
-    tooltip: { trigger: 'item' },
-    series: [{
-      type: 'pie',
-      radius: '60%',
-      data: chartData.value.categoryChart,
-      emphasis: {
-        itemStyle: {
-          shadowBlur: 10,
-          shadowOffsetX: 0,
-          shadowColor: 'rgba(0, 0, 0, 0.5)'
-        }
-      }
-    }]
-  }
-}
+    tooltip: { trigger: "item" },
+    series: [
+      {
+        type: "pie",
+        radius: "60%",
+        data: chartData.value.categoryChart,
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: "rgba(0, 0, 0, 0.5)",
+          },
+        },
+      },
+    ],
+  };
+};
 
 const formatDate = (date: string) => {
-  return new Date(date).toLocaleDateString('zh-CN')
-}
+  return new Date(date).toLocaleDateString("zh-CN");
+};
 
 const formatSize = (size: number) => {
-  if (size < 1024) return size + ' B'
-  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB'
-  return (size / 1024 / 1024).toFixed(1) + ' MB'
-}
+  if (size < 1024) return size + " B";
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+  return (size / 1024 / 1024).toFixed(1) + " MB";
+};
 
 onMounted(() => {
-  fetchData()
-})
+  fetchData();
+});
 </script>
 
 <style scoped>

@@ -20,6 +20,15 @@ model User {
   role      Role?    @relation(fields: [roleId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // 分配给我的任务
+  assignedTasks  Task[]  @relation("TaskAssignee")
+  // 我创建的任务
+  createdTasks   Task[]  @relation("TaskCreator")
+  // 任务日志
+  taskLogs       TaskLog[] @relation("TaskLogUser")
+  // 评论
+  comments       Comment[] @relation("CommentUser")
 }
 
 model Role {
@@ -84,4 +93,64 @@ model DataRecord {
   status    Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// 任务表 (状态和优先级使用字符串，枚举值在应用层校验)
+// status: PENDING | IN_PROGRESS | REVIEW | COMPLETED | CANCELLED
+// priority: LOW | MEDIUM | HIGH | URGENT
+model Task {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  status      String   @default("PENDING")
+  priority    String   @default("MEDIUM")
+  assigneeId  String?
+  creatorId   String
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignee    User?    @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator     User     @relation("TaskCreator", fields: [creatorId], references: [id])
+  logs        TaskLog[]
+  comments    Comment[]
+
+  @@index([status])
+  @@index([assigneeId])
+  @@index([creatorId])
+  @@index([dueDate])
+}
+
+// 任务日志表
+model TaskLog {
+  id          String   @id @default(uuid())
+  taskId      String
+  userId      String
+  action      String   // 动作类型: create, update, status_change, assign, comment
+  beforeStatus String?
+  afterStatus  String?
+  content     String?  // 额外描述
+  createdAt   DateTime @default(now())
+
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User     @relation("TaskLogUser", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+// 评论表
+model Comment {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation("CommentUser", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([userId])
 }

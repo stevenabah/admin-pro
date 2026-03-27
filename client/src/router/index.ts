@@ -70,6 +70,24 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/NLQuery.vue"),
         meta: { title: "自然语言查询" },
       },
+      {
+        path: "task",
+        name: "TaskList",
+        component: () => import("@/views/TaskList.vue"),
+        meta: { title: "任务列表" },
+      },
+      {
+        path: "task/board",
+        name: "TaskBoard",
+        component: () => import("@/views/TaskBoard.vue"),
+        meta: { title: "任务看板" },
+      },
+      {
+        path: "task/:id",
+        name: "TaskDetail",
+        component: () => import("@/views/TaskDetail.vue"),
+        meta: { title: "任务详情" },
+      },
     ],
   },
 ];
