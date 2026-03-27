@@ -8,6 +8,10 @@
             <span>AI 智能助手</span>
           </div>
           <div class="header-right">
+            <el-button size="small" @click="exportHistory">
+              <el-icon><Download /></el-icon>
+              导出记录
+            </el-button>
             <el-button size="small" @click="showSettings = true">
               <el-icon><Setting /></el-icon>
               API 设置
@@ -127,6 +131,9 @@
         </el-alert>
       </el-form>
       <template #footer>
+        <el-button @click="testConnection" :loading="testing"
+          >测试连接</el-button
+        >
         <el-button @click="showSettings = false">取消</el-button>
         <el-button type="primary" @click="saveSettings">保存设置</el-button>
       </template>
@@ -145,6 +152,7 @@ import {
   Position,
   Setting,
   Delete,
+  Download,
 } from "@element-plus/icons-vue";
 
 interface Message {
@@ -164,7 +172,7 @@ interface ApiSettings {
 const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
   minimax: {
     baseUrl: "https://api.minimax.chat/v1",
-    model: "abab6-chat",
+    model: "MiniMax-Text-01",
   },
   doubao: {
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
@@ -172,15 +180,15 @@ const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
   },
   zhipu: {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-    model: "glm-4",
+    model: "glm-4-flash",
   },
   openai: {
     baseUrl: "https://api.openai.com/v1/chat/completions",
-    model: "gpt-4",
+    model: "gpt-4o-mini",
   },
   claude: {
     baseUrl: "https://api.anthropic.com/v1/messages",
-    model: "claude-3-sonnet-20240229",
+    model: "claude-3-haiku-20240307",
   },
   siliconflow: {
     baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
@@ -203,14 +211,15 @@ const messages = reactive<Message[]>([
 ]);
 const inputMessage = ref("");
 const loading = ref(false);
+const testing = ref(false);
 const messagesRef = ref<HTMLElement>();
 const showSettings = ref(false);
 
 const defaultSettings: ApiSettings = {
-  provider: "doubao",
-  baseUrl: PROVIDER_DEFAULTS.doubao.baseUrl,
+  provider: "siliconflow",
+  baseUrl: PROVIDER_DEFAULTS.siliconflow.baseUrl,
   apiKey: "",
-  model: PROVIDER_DEFAULTS.doubao.model,
+  model: PROVIDER_DEFAULTS.siliconflow.model,
 };
 
 const apiSettings = reactive<ApiSettings>({ ...defaultSettings });
@@ -254,6 +263,37 @@ const saveSettings = () => {
   localStorage.setItem("ai_api_settings", JSON.stringify(apiSettings));
   showSettings.value = false;
   ElMessage.success("API 设置已保存");
+};
+
+const testConnection = async () => {
+  if (!apiSettings.apiKey) {
+    ElMessage.warning("请先输入 API Key");
+    return;
+  }
+
+  testing.value = true;
+  try {
+    const res = await api.post("/ai/chat", {
+      message: "你好",
+      history: [],
+      provider: apiSettings.provider,
+      baseUrl: apiSettings.baseUrl,
+      apiKey: apiSettings.apiKey,
+      model: apiSettings.model,
+    });
+
+    if (res.code === 200 && !res.data.reply.includes("调用失败")) {
+      ElMessage.success("连接成功！AI 已可正常使用");
+    } else {
+      ElMessage.error(
+        "连接失败: " + (res.data?.reply || res.message || "未知错误"),
+      );
+    }
+  } catch (error: any) {
+    ElMessage.error("连接失败: " + (error.message || "网络错误"));
+  } finally {
+    testing.value = false;
+  }
 };
 
 const sendMessage = async () => {
@@ -333,6 +373,34 @@ const clearHistory = () => {
     content: "对话已清空，请开始新的对话。",
     timestamp: new Date(),
   });
+};
+
+const exportHistory = () => {
+  if (messages.length <= 1) {
+    ElMessage.warning("没有可导出的对话记录");
+    return;
+  }
+
+  const content = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => {
+      const role = m.role === "user" ? "用户" : "AI 助手";
+      const time = m.timestamp ? formatTime(m.timestamp) : "";
+      return `[${time}] ${role}:\n${m.content}\n`;
+    })
+    .join("\n---\n\n");
+
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `AI对话记录_${new Date().toLocaleDateString("zh-CN").replace(/\//g, "-")}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  ElMessage.success("对话记录已导出");
 };
 </script>
 

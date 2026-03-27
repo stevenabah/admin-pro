@@ -3,11 +3,11 @@ import type { ChatMessage } from "../types/ai";
 
 const prisma = new PrismaClient();
 
-// 默认配置
+// 默认配置 - 国内常用大模型
 const DEFAULT_CONFIG: Record<string, { baseUrl: string; model: string }> = {
   minimax: {
     baseUrl: "https://api.minimax.chat/v1",
-    model: "abab6-chat",
+    model: "MiniMax-Text-01",
   },
   doubao: {
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
@@ -15,15 +15,15 @@ const DEFAULT_CONFIG: Record<string, { baseUrl: string; model: string }> = {
   },
   zhipu: {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-    model: "glm-4",
+    model: "glm-4-flash",
   },
   openai: {
     baseUrl: "https://api.openai.com/v1/chat/completions",
-    model: "gpt-4",
+    model: "gpt-4o-mini",
   },
   claude: {
     baseUrl: "https://api.anthropic.com/v1/messages",
-    model: "claude-3-sonnet-20240229",
+    model: "claude-3-haiku-20240307",
   },
   siliconflow: {
     baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
@@ -74,7 +74,7 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
   console.log(`[AI] BaseURL: ${baseUrl}`);
   console.log(`[AI] Model: ${model}`);
 
-  // Claude API 格式
+  // Claude API 格式 (不同)
   if (provider === "claude") {
     const lastMessage = messages[messages.length - 1].content;
     const systemMessage =
@@ -105,8 +105,23 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
     return data.content[0].text;
   }
 
-  // Doubao (字节跳动) API 格式 - OpenAI 兼容
-  if (provider === "doubao") {
+  // OpenAI 兼容格式 (智谱GLM, 硅基流动, Doubao, MiniMax等)
+  const openAIFormatProviders = [
+    "minimax",
+    "doubao",
+    "zhipu",
+    "openai",
+    "siliconflow",
+    "custom",
+  ];
+
+  if (openAIFormatProviders.includes(provider)) {
+    // 过滤掉 system 消息用于 MiniMax (某些版本不支持)
+    const filteredMessages =
+      provider === "minimax"
+        ? messages.filter((m) => m.role !== "system")
+        : messages;
+
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -115,32 +130,7 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
       },
       body: JSON.stringify({
         model: model,
-        messages: messages,
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[AI] Doubao API error: ${response.status} - ${errorText}`);
-      throw new Error(`Doubao API error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-
-  // MiniMax API 格式 - OpenAI 兼容
-  if (provider === "minimax") {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: messages.filter((m) => m.role !== "system"),
+        messages: filteredMessages,
         temperature: 0.7,
       }),
     });
@@ -148,20 +138,22 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(
-        `[AI] MiniMax API error: ${response.status} - ${errorText}`,
+        `[AI] ${provider} API error: ${response.status} - ${errorText}`,
       );
-      throw new Error(`MiniMax API error: ${response.status} - ${errorText}`);
+      throw new Error(
+        `${provider} API error: ${response.status} - ${errorText}`,
+      );
     }
 
     const data = await response.json();
     console.log(
-      `[AI] MiniMax response:`,
-      JSON.stringify(data).substring(0, 300),
+      `[AI] ${provider} response:`,
+      JSON.stringify(data).substring(0, 200),
     );
     return data.choices[0].message.content;
   }
 
-  // OpenAI 兼容格式 (默认)
+  // 默认 OpenAI 格式
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -177,7 +169,6 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[AI] API error: ${response.status} - ${errorText}`);
     throw new Error(`API error: ${response.status} - ${errorText}`);
   }
 
