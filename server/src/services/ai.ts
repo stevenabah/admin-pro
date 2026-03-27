@@ -3,11 +3,27 @@ import type { ChatMessage } from "../types/ai";
 
 const prisma = new PrismaClient();
 
-// 智谱 AI 配置（需要替换为实际的 API Key）
-const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || "";
-const ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+// 默认配置
+const DEFAULT_CONFIG: Record<string, { baseUrl: string; model: string }> = {
+  zhipu: {
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    model: "glm-4",
+  },
+  openai: {
+    baseUrl: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4",
+  },
+  claude: {
+    baseUrl: "https://api.anthropic.com/v1/messages",
+    model: "claude-3-sonnet-20240229",
+  },
+  siliconflow: {
+    baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
+    model: "Qwen/Qwen2.5-7B-Instruct",
+  },
+};
 
-// 数据库表结构信息，用于 NL2SQL
+// 数据库表结构信息
 const TABLE_SCHEMAS = `
 现有数据库表结构：
 - User: id, username, password, nickname, email, status, createdAt, updatedAt, lastLoginAt, loginCount, roleId
@@ -20,7 +36,91 @@ const TABLE_SCHEMAS = `
 - LoginLog: id, userId, ip, location, createdAt
 `;
 
-// 模拟对话回复（无 API Key 时使用）
+interface AIConfig {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+// 获取完整的 AI 配置
+function getAIConfig(config: AIConfig): AIConfig {
+  const providerDefaults = DEFAULT_CONFIG[config.provider] || {
+    baseUrl: "",
+    model: "",
+  };
+
+  return {
+    provider: config.provider,
+    baseUrl: config.baseUrl || providerDefaults.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model || providerDefaults.model,
+  };
+}
+
+// 通用 AI API 调用
+async function callAI(messages: any[], config: AIConfig): Promise<string> {
+  const { provider, baseUrl, apiKey, model } = config;
+
+  console.log(`[AI] Calling ${provider} API with model: ${model}`);
+  console.log(`[AI] BaseURL: ${baseUrl}`);
+
+  // 根据 provider 选择不同的 API 格式
+  if (provider === "claude") {
+    // Claude API 格式
+    const lastMessage = messages[messages.length - 1].content;
+    const systemMessage =
+      messages.find((m) => m.role === "system")?.content || "";
+
+    const response = await fetch(baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 4096,
+        system: systemMessage,
+        messages: [{ role: "user", content: lastMessage }],
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Claude API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return data.content[0].text;
+  } else {
+    // OpenAI 兼容格式 (包括智谱 GLM, 硅基流动等)
+    const response = await fetch(baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+}
+
+// 模拟对话回复
 function mockChat(message: string): string {
   const lowerMsg = message.toLowerCase();
 
@@ -47,7 +147,7 @@ function mockChat(message: string): string {
   return "您好！我是 AI 智能助手，可以帮助您：\n1. 解答系统相关问题\n2. 指导操作步骤\n3. 提供数据查询建议\n\n请问有什么可以帮助您的？";
 }
 
-// 模拟 NL2SQL（无 API Key 时使用）
+// 模拟 NL2SQL
 function mockNl2sql(question: string): {
   sql: string;
   results: any[];
@@ -87,14 +187,20 @@ function mockNl2sql(question: string): {
 }
 
 export const zhipuAI = {
-  // 通用对话
-  async chat(message: string, history: ChatMessage[] = []): Promise<string> {
-    // 如果没有配置 API Key，返回模拟回复
-    if (!ZHIPU_API_KEY) {
+  // AI 对话
+  async chat(
+    message: string,
+    history: ChatMessage[] = [],
+    config?: AIConfig,
+  ): Promise<string> {
+    // 如果没有配置，使用模拟回复
+    if (!config?.apiKey) {
       return mockChat(message);
     }
 
     try {
+      const aiConfig = getAIConfig(config);
+
       const messages = [
         {
           role: "system",
@@ -108,80 +214,58 @@ export const zhipuAI = {
         { role: "user", content: message },
       ];
 
-      const response = await fetch(ZHIPU_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ZHIPU_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "glm-4",
-          messages,
-          temperature: 0.7,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API 请求失败: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.choices[0].message.content;
+      return await callAI(messages, aiConfig);
     } catch (error: any) {
-      console.error("智谱 AI 调用失败:", error);
-      return mockChat(message);
+      console.error("AI 调用失败:", error);
+      return `AI 服务调用失败: ${error.message}\n\n请检查您的 API 配置是否正确。`;
     }
   },
 
-  // NL2SQL - 自然语言转 SQL
-  async nl2sql(question: string): Promise<{
+  // NL2SQL
+  async nl2sql(
+    question: string,
+    config?: AIConfig,
+  ): Promise<{
     sql: string;
     results: any[];
     columns: string[];
   }> {
-    if (!ZHIPU_API_KEY) {
+    // 如果没有配置 API Key，返回模拟结果
+    if (!config?.apiKey) {
       return mockNl2sql(question);
     }
 
     try {
+      const aiConfig = getAIConfig(config);
+
       const prompt = `${TABLE_SCHEMAS}
 
-请将以下自然语言问题转换为 SQL 查询语句（只允许 SELECT 查询，禁止 UPDATE/DELETE/DROP 等危险操作）。
+请将以下自然语言问题转换为 SQL 查询语句（只允许 SELECT 查询）。
 
 问题: ${question}
 
 要求：
 1. 只返回 SQL 语句，不要其他解释
 2. SQL 必须只使用 SELECT
-3. 确保 SQL 语法正确
-4. 注意表之间的关联关系（外键）`;
+3. 确保 SQL 语法正确`;
 
-      const messages = [{ role: "user" as const, content: prompt }];
-
-      const response = await fetch(ZHIPU_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ZHIPU_API_KEY}`,
+      const messages = [
+        {
+          role: "system",
+          content: "你是一个 SQL 专家，负责将自然语言转换为 SQL 查询语句。",
         },
-        body: JSON.stringify({
-          model: "glm-4",
-          messages,
-          temperature: 0.1,
-        }),
-      });
+        { role: "user", content: prompt },
+      ];
 
-      if (!response.ok) {
-        throw new Error(`API 请求失败: ${response.status}`);
-      }
+      let sql = await callAI(messages, aiConfig);
 
-      const data = await response.json();
-      let sql = data.choices[0].message.content
+      // 清理 SQL
+      sql = sql
         .replace(/```sql/g, "")
         .replace(/```/g, "")
         .trim();
 
-      // 安全检查：确保只有 SELECT
+      // 安全检查
       if (!sql.toUpperCase().includes("SELECT")) {
         throw new Error("生成的 SQL 不是查询语句");
       }

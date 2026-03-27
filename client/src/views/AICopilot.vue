@@ -7,7 +7,16 @@
             <el-icon size="24"><ChatDotRound /></el-icon>
             <span>AI 智能助手</span>
           </div>
-          <el-button size="small" @click="clearHistory">清空对话</el-button>
+          <div class="header-right">
+            <el-button size="small" @click="showSettings = true">
+              <el-icon><Setting /></el-icon>
+              API 设置
+            </el-button>
+            <el-button size="small" @click="clearHistory">
+              <el-icon><Delete /></el-icon>
+              清空对话
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -30,7 +39,7 @@
         </div>
         <div v-if="loading" class="message assistant loading">
           <div class="avatar">
-            <el-icon size="20"><Robot /></el-icon>
+            <el-icon size="20"><Service /></el-icon>
           </div>
           <div class="content">
             <div class="message-content">
@@ -70,14 +79,71 @@
         </div>
       </div>
     </el-card>
+
+    <!-- API 设置对话框 -->
+    <el-dialog v-model="showSettings" title="AI API 设置" width="550px">
+      <el-form :model="apiSettings" label-width="100px">
+        <el-form-item label="API Provider">
+          <el-select v-model="apiSettings.provider" @change="onProviderChange">
+            <el-option label="智谱 AI (GLM-4)" value="zhipu" />
+            <el-option label="OpenAI (GPT-4)" value="openai" />
+            <el-option label="Claude (Anthropic)" value="claude" />
+            <el-option label="硅基流动" value="siliconflow" />
+            <el-option label="自定义 (OpenAI 兼容)" value="custom" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Base URL">
+          <el-input
+            v-model="apiSettings.baseUrl"
+            placeholder="https://api.example.com/v1/chat/completions"
+          />
+        </el-form-item>
+        <el-form-item label="API Key">
+          <el-input
+            v-model="apiSettings.apiKey"
+            type="password"
+            show-password
+            placeholder="输入您的 API Key"
+          />
+        </el-form-item>
+        <el-form-item label="模型名称">
+          <el-input
+            v-model="apiSettings.model"
+            placeholder="如: glm-4, gpt-4, claude-3-sonnet-20240229"
+          />
+        </el-form-item>
+        <el-alert
+          v-if="apiSettings.provider === 'claude'"
+          type="info"
+          :closable="false"
+          show-icon
+        >
+          <template #title>
+            Claude API 请使用 https://api.anthropic.com/v1/messages 作为 Base
+            URL
+          </template>
+        </el-alert>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSettings = false">取消</el-button>
+        <el-button type="primary" @click="saveSettings">保存设置</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick } from "vue";
+import { ref, reactive, nextTick, onMounted, watch } from "vue";
 import { useUserStore, api } from "@/stores/user";
 import { ElMessage } from "element-plus";
-import { ChatDotRound, User, Service, Position } from "@element-plus/icons-vue";
+import {
+  ChatDotRound,
+  User,
+  Service,
+  Position,
+  Setting,
+  Delete,
+} from "@element-plus/icons-vue";
 
 interface Message {
   role: "user" | "assistant";
@@ -85,18 +151,79 @@ interface Message {
   timestamp?: Date;
 }
 
+interface ApiSettings {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+// Provider 默认配置
+const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
+  zhipu: {
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    model: "glm-4",
+  },
+  openai: {
+    baseUrl: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4",
+  },
+  claude: {
+    baseUrl: "https://api.anthropic.com/v1/messages",
+    model: "claude-3-sonnet-20240229",
+  },
+  siliconflow: {
+    baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
+    model: "Qwen/Qwen2.5-7B-Instruct",
+  },
+  custom: {
+    baseUrl: "",
+    model: "",
+  },
+};
+
 const userStore = useUserStore();
 const messages = reactive<Message[]>([
   {
     role: "assistant",
     content:
-      "您好！我是 AI 智能助手，可以帮助您管理后台系统。请告诉我您需要什么帮助？",
+      "您好！我是 AI 智能助手，可以帮助您管理后台系统。请先在右上角设置您的 AI API 配置，然后开始对话。",
     timestamp: new Date(),
   },
 ]);
 const inputMessage = ref("");
 const loading = ref(false);
 const messagesRef = ref<HTMLElement>();
+const showSettings = ref(false);
+
+const defaultSettings: ApiSettings = {
+  provider: "claude",
+  baseUrl: PROVIDER_DEFAULTS.claude.baseUrl,
+  apiKey: "",
+  model: PROVIDER_DEFAULTS.claude.model,
+};
+
+const apiSettings = reactive<ApiSettings>({ ...defaultSettings });
+
+// 当 Provider 变化时，自动填充 baseUrl 和 model
+const onProviderChange = (provider: string) => {
+  const defaults = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.custom;
+  apiSettings.baseUrl = defaults.baseUrl;
+  apiSettings.model = defaults.model;
+};
+
+// 加载保存的设置
+onMounted(() => {
+  const saved = localStorage.getItem("ai_api_settings");
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      Object.assign(apiSettings, parsed);
+    } catch {
+      // ignore
+    }
+  }
+});
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -113,8 +240,21 @@ const formatTime = (date: Date) => {
   });
 };
 
+const saveSettings = () => {
+  localStorage.setItem("ai_api_settings", JSON.stringify(apiSettings));
+  showSettings.value = false;
+  ElMessage.success("API 设置已保存");
+};
+
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || loading.value) return;
+
+  // 检查是否配置了 API
+  if (!apiSettings.apiKey) {
+    ElMessage.warning("请先配置 AI API Key");
+    showSettings.value = true;
+    return;
+  }
 
   const userMessage = inputMessage.value.trim();
   inputMessage.value = "";
@@ -131,6 +271,7 @@ const sendMessage = async () => {
   try {
     const history = messages
       .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(0, -1)
       .map((m) => ({
         role: m.role === "user" ? "user" : "assistant",
         content: m.content,
@@ -138,7 +279,11 @@ const sendMessage = async () => {
 
     const res = await api.post("/ai/chat", {
       message: userMessage,
-      history: history.slice(0, -1),
+      history,
+      provider: apiSettings.provider,
+      baseUrl: apiSettings.baseUrl,
+      apiKey: apiSettings.apiKey,
+      model: apiSettings.model,
     });
 
     if (res.code === 200) {
@@ -214,6 +359,11 @@ const clearHistory = () => {
   align-items: center;
   gap: 8px;
   font-weight: 600;
+}
+
+.header-right {
+  display: flex;
+  gap: 8px;
 }
 
 .chat-messages {
