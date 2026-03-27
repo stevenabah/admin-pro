@@ -7,7 +7,11 @@ const prisma = new PrismaClient();
 const DEFAULT_CONFIG: Record<string, { baseUrl: string; model: string }> = {
   minimax: {
     baseUrl: "https://api.minimax.chat/v1",
-    model: "MiniMax-Text-01",
+    model: "abab6-chat",
+  },
+  doubao: {
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    model: "doubao-beta",
   },
   zhipu: {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
@@ -69,7 +73,6 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
   console.log(`[AI] Provider: ${provider}`);
   console.log(`[AI] BaseURL: ${baseUrl}`);
   console.log(`[AI] Model: ${model}`);
-  console.log(`[AI] Messages count: ${messages.length}`);
 
   // Claude API 格式
   if (provider === "claude") {
@@ -94,16 +97,16 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Claude API error: ${response.status} - ${error}`);
+      const errorText = await response.text();
+      throw new Error(`Claude API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
     return data.content[0].text;
   }
 
-  // MiniMax API 格式 (OpenAI 兼容)
-  if (provider === "minimax") {
+  // Doubao (字节跳动) API 格式 - OpenAI 兼容
+  if (provider === "doubao") {
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -119,6 +122,31 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`[AI] Doubao API error: ${response.status} - ${errorText}`);
+      throw new Error(`Doubao API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+
+  // MiniMax API 格式 - OpenAI 兼容
+  if (provider === "minimax") {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages.filter((m) => m.role !== "system"),
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
       console.error(
         `[AI] MiniMax API error: ${response.status} - ${errorText}`,
       );
@@ -128,7 +156,7 @@ async function callAI(messages: any[], config: AIConfig): Promise<string> {
     const data = await response.json();
     console.log(
       `[AI] MiniMax response:`,
-      JSON.stringify(data).substring(0, 200),
+      JSON.stringify(data).substring(0, 300),
     );
     return data.choices[0].message.content;
   }
@@ -238,7 +266,7 @@ export const zhipuAI = {
     try {
       const aiConfig = getAIConfig(config);
 
-      const messages = [
+      const chatMessages = [
         {
           role: "system",
           content:
@@ -251,7 +279,7 @@ export const zhipuAI = {
         { role: "user", content: message },
       ];
 
-      return await callAI(messages, aiConfig);
+      return await callAI(chatMessages, aiConfig);
     } catch (error: any) {
       console.error("AI 调用失败:", error);
       return `AI 服务调用失败: ${error.message}\n\n请检查您的 API 配置是否正确。`;

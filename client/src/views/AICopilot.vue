@@ -85,6 +85,7 @@
       <el-form :model="apiSettings" label-width="100px">
         <el-form-item label="API Provider">
           <el-select v-model="apiSettings.provider" @change="onProviderChange">
+            <el-option label="豆包 (Doubao)" value="doubao" />
             <el-option label="MiniMax (海螺)" value="minimax" />
             <el-option label="智谱 AI (GLM-4)" value="zhipu" />
             <el-option label="OpenAI (GPT-4)" value="openai" />
@@ -163,7 +164,11 @@ interface ApiSettings {
 const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
   minimax: {
     baseUrl: "https://api.minimax.chat/v1",
-    model: "MiniMax-Text-01",
+    model: "abab6-chat",
+  },
+  doubao: {
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    model: "doubao-beta",
   },
   zhipu: {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
@@ -202,10 +207,10 @@ const messagesRef = ref<HTMLElement>();
 const showSettings = ref(false);
 
 const defaultSettings: ApiSettings = {
-  provider: "minimax",
-  baseUrl: PROVIDER_DEFAULTS.minimax.baseUrl,
+  provider: "doubao",
+  baseUrl: PROVIDER_DEFAULTS.doubao.baseUrl,
   apiKey: "",
-  model: PROVIDER_DEFAULTS.minimax.model,
+  model: PROVIDER_DEFAULTS.doubao.model,
 };
 
 const apiSettings = reactive<ApiSettings>({ ...defaultSettings });
