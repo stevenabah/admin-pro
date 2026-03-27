@@ -14,6 +14,7 @@ import dataRoutes from "./routes/data.js";
 import statsRoutes from "./routes/stats.js";
 import aiRoutes from "./routes/ai.js";
 import taskRoutes from "./routes/tasks.js";
+import notificationRoutes from "./routes/notifications.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,6 +40,7 @@ app.use("/api/data", dataRoutes);
 app.use("/api/tasks/stats", statsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/tasks", taskRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // 健康检查
 app.get("/api/health", (req, res) => {

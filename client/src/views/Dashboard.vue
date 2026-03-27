@@ -1,6 +1,123 @@
 <template>
   <div class="dashboard">
-    <el-row :gutter="20">
+    <!-- 我的任务工作台 -->
+    <el-card class="my-task-workspace">
+      <template #header>
+        <div class="card-header">
+          <span>我的任务工作台</span>
+          <el-button type="primary" link @click="$router.push('/task')">
+            查看全部 <el-icon><ArrowRight /></el-icon>
+          </el-button>
+        </div>
+      </template>
+      <el-row :gutter="20">
+        <el-col :span="6">
+          <div class="task-stat-item pending">
+            <div class="task-stat-value">{{ myTaskStats.pending || 0 }}</div>
+            <div class="task-stat-label">待处理</div>
+          </div>
+        </el-col>
+        <el-col :span="6">
+          <div class="task-stat-item in-progress">
+            <div class="task-stat-value">{{ myTaskStats.inProgress || 0 }}</div>
+            <div class="task-stat-label">进行中</div>
+          </div>
+        </el-col>
+        <el-col :span="6">
+          <div class="task-stat-item review">
+            <div class="task-stat-value">{{ myTaskStats.review || 0 }}</div>
+            <div class="task-stat-label">待审核</div>
+          </div>
+        </el-col>
+        <el-col :span="6">
+          <div class="task-stat-item overdue" :class="{ 'has-overdue': myTaskStats.overdue > 0 }">
+            <div class="task-stat-value">{{ myTaskStats.overdue || 0 }}</div>
+            <div class="task-stat-label">逾期任务</div>
+          </div>
+        </el-col>
+      </el-row>
+
+      <!-- 逾期提醒 -->
+      <div v-if="myDashboard.todayOverdueTasks?.length" class="overdue-alert">
+        <el-alert type="warning" :closable="false">
+          <template #title>
+            <span>您有 {{ myDashboard.todayOverdueTasks?.length }} 个任务已逾期</span>
+          </template>
+        </el-alert>
+        <div class="overdue-task-list">
+          <div
+            v-for="task in myDashboard.todayOverdueTasks"
+            :key="task.id"
+            class="overdue-task-item"
+            @click="$router.push(`/task/${task.id}`)"
+          >
+            <el-tag type="danger" size="small">逾期</el-tag>
+            <span class="task-title">{{ task.title }}</span>
+            <span class="task-due">截止: {{ formatDate(task.dueDate) }}</span>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
+    <el-row :gutter="20" style="margin-top: 20px">
+      <!-- 我的待办 -->
+      <el-col :span="12">
+        <el-card>
+          <template #header>
+            <span>我的待办</span>
+          </template>
+          <div v-if="myDashboard.myTodoTasks?.length" class="todo-list">
+            <div
+              v-for="task in myDashboard.myTodoTasks"
+              :key="task.id"
+              class="todo-item"
+              @click="$router.push(`/task/${task.id}`)"
+            >
+              <el-tag
+                :color="TaskPriorityConfig[task.priority]?.color"
+                size="small"
+                style="color: #fff"
+              >
+                {{ TaskPriorityConfig[task.priority]?.label }}
+              </el-tag>
+              <span class="todo-title">{{ task.title }}</span>
+              <span v-if="task.dueDate" class="todo-due" :class="{ overdue: task.isOverdue }">
+                {{ formatDate(task.dueDate) }}
+              </span>
+            </div>
+          </div>
+          <el-empty v-else description="暂无待办任务" :image-size="60" />
+        </el-card>
+      </el-col>
+
+      <!-- 最近创建 -->
+      <el-col :span="12">
+        <el-card>
+          <template #header>
+            <span>最近创建的任务</span>
+          </template>
+          <div v-if="myDashboard.recentCreatedTasks?.length" class="todo-list">
+            <div
+              v-for="task in myDashboard.recentCreatedTasks"
+              :key="task.id"
+              class="todo-item"
+              @click="$router.push(`/task/${task.id}`)"
+            >
+              <el-tag :type="task.status === 'COMPLETED' ? 'success' : 'info'" size="small">
+                {{ task.statusText }}
+              </el-tag>
+              <span class="todo-title">{{ task.title }}</span>
+              <span v-if="task.assignee" class="todo-assignee">
+                → {{ task.assignee.nickname || task.assignee.username }}
+              </span>
+            </div>
+          </div>
+          <el-empty v-else description="暂无任务" :image-size="60" />
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" style="margin-top: 20px">
       <el-col :span="6">
         <el-card class="stat-card">
           <div class="stat-icon" style="background: #409eff">
@@ -42,54 +159,6 @@
           <div class="stat-content">
             <div class="stat-value">{{ stats.mediaCount }}</div>
             <div class="stat-label">媒体数量</div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <el-row :gutter="20" style="margin-top: 20px">
-      <el-col :span="6">
-        <el-card
-          class="stat-card"
-          @click="$router.push('/task')"
-          style="cursor: pointer"
-        >
-          <div class="stat-icon" style="background: #909399">
-            <el-icon :size="30"><List /></el-icon>
-          </div>
-          <div class="stat-content">
-            <div class="stat-value">{{ taskStats.total || 0 }}</div>
-            <div class="stat-label">任务总数</div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card
-          class="stat-card"
-          @click="$router.push('/task')"
-          style="cursor: pointer"
-        >
-          <div class="stat-icon" style="background: #409eff">
-            <el-icon :size="30"><Clock /></el-icon>
-          </div>
-          <div class="stat-content">
-            <div class="stat-value">{{ taskStats.inProgress || 0 }}</div>
-            <div class="stat-label">进行中</div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card
-          class="stat-card"
-          @click="$router.push('/task')"
-          style="cursor: pointer"
-        >
-          <div class="stat-icon" style="background: #67c23a">
-            <el-icon :size="30"><CircleCheck /></el-icon>
-          </div>
-          <div class="stat-content">
-            <div class="stat-value">{{ taskStats.completed || 0 }}</div>
-            <div class="stat-label">已完成</div>
           </div>
         </el-card>
       </el-col>
@@ -167,7 +236,7 @@ import {
 } from "echarts/components";
 import VChart from "vue-echarts";
 import { api } from "@/stores/user";
-import { getTaskStats } from "@/api/task";
+import { getTaskStats, getMyDashboard, TaskPriorityConfig } from "@/api/task";
 
 use([
   CanvasRenderer,
@@ -193,6 +262,19 @@ const taskStats = ref<any>({
   completed: 0,
 });
 
+const myTaskStats = ref<any>({
+  pending: 0,
+  inProgress: 0,
+  review: 0,
+  overdue: 0,
+});
+
+const myDashboard = ref<any>({
+  myTodoTasks: [],
+  recentCreatedTasks: [],
+  todayOverdueTasks: [],
+});
+
 const chartData = ref<any>({
   visitChart: { xAxis: [], series: [] },
   categoryChart: [],
@@ -202,10 +284,11 @@ const lineChart = ref({});
 const pieChart = ref({});
 
 const fetchData = async () => {
-  const [statsRes, chartRes, taskStatsRes] = await Promise.all([
+  const [statsRes, chartRes, taskStatsRes, myDashboardRes] = await Promise.all([
     api.get("/stats/dashboard"),
     api.get("/stats/chart-data"),
     getTaskStats(),
+    getMyDashboard(),
   ]);
 
   if (statsRes.code === 200) {
@@ -217,6 +300,10 @@ const fetchData = async () => {
   }
   if (taskStatsRes.code === 200) {
     taskStats.value = taskStatsRes.data;
+  }
+  if (myDashboardRes.code === 200) {
+    myTaskStats.value = myDashboardRes.data.stats || {};
+    myDashboard.value = myDashboardRes.data || {};
   }
 };
 
@@ -309,5 +396,131 @@ onMounted(() => {
   font-size: 14px;
   color: #999;
   margin-top: 5px;
+}
+
+/* 我的任务工作台样式 */
+.my-task-workspace {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+}
+
+.my-task-workspace :deep(.el-card__header) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.my-task-workspace :deep(.el-card__body) {
+  color: #fff;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-header .el-button {
+  color: #fff;
+}
+
+.task-stat-item {
+  text-align: center;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  margin: 0 8px;
+}
+
+.task-stat-item.has-overdue {
+  background: rgba(245, 108, 108, 0.3);
+}
+
+.task-stat-value {
+  font-size: 32px;
+  font-weight: bold;
+}
+
+.task-stat-label {
+  font-size: 14px;
+  opacity: 0.9;
+  margin-top: 4px;
+}
+
+.overdue-alert {
+  margin-top: 20px;
+}
+
+.overdue-task-list {
+  margin-top: 12px;
+}
+
+.overdue-task-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  margin-top: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.overdue-task-item:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.overdue-task-item .task-title {
+  flex: 1;
+}
+
+.overdue-task-item .task-due {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 待办列表样式 */
+.todo-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.todo-item:last-child {
+  border-bottom: none;
+}
+
+.todo-item:hover {
+  background: #f5f7fa;
+}
+
+.todo-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-due {
+  font-size: 12px;
+  color: #909399;
+}
+
+.todo-due.overdue {
+  color: #f56c6c;
+}
+
+.todo-assignee {
+  font-size: 12px;
+  color: #909399;
 }
 </style>

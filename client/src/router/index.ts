@@ -100,6 +100,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/GanttChart.vue"),
         meta: { title: "甘特图" },
       },
+      {
+        path: "notifications",
+        name: "Notifications",
+        component: () => import("@/views/Notifications.vue"),
+        meta: { title: "通知中心" },
+      },
     ],
   },
 ];

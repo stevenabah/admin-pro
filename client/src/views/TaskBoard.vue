@@ -32,6 +32,7 @@
           <div class="column-content">
             <div
               class="task-card"
+              :class="{ overdue: task.isOverdue }"
               v-for="task in boardData[status.key]"
               :key="task.id"
               @click="goToDetail(task.id)"
@@ -493,6 +494,10 @@ onMounted(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   cursor: pointer;
   transition: all 0.2s;
+}
+
+.task-card.overdue {
+  border-left: 3px solid #f56c6c;
 }
 
 .task-card:hover {

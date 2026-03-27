@@ -141,16 +141,33 @@ model TaskLog {
 
 // 评论表
 model Comment {
-  id        String   @id @default(uuid())
-  taskId    String
-  userId    String
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(uuid())
+  taskId        String
+  userId        String
+  content       String
+  mentions      String?  // JSON数组，存储被@的用户ID列表，如 ["userId1", "userId2"]
+  attachments   String?  // JSON数组，存储附件ID列表，如 ["fileId1", "fileId2"]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user      User     @relation("CommentUser", fields: [userId], references: [id])
+  task          Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User     @relation("CommentUser", fields: [userId], references: [id])
 
   @@index([taskId])
   @@index([userId])
+}
+
+// 通知表
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // 通知类型: mention(提及), assign(分配), status_change(状态变更), comment(评论), overdue(逾期)
+  title     String
+  content   String?
+  taskId    String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([taskId])
 }

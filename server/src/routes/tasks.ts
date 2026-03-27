@@ -2,6 +2,7 @@ import { Router } from "express";
 import prisma from "../lib/prisma.js";
 import { authMiddleware, AuthRequest } from "../middleware/auth.js";
 import { checkPermission } from "../middleware/rbac.js";
+import { createNotification } from "./notifications.js";
 
 const router = Router();
 
@@ -107,6 +108,10 @@ router.get(
             ...t,
             statusText: STATUS_TEXT[t.status],
             priorityText: PRIORITY_TEXT[t.priority],
+            isOverdue:
+              !["COMPLETED", "CANCELLED"].includes(t.status) &&
+              t.dueDate !== null &&
+              new Date(t.dueDate) < new Date(),
           })),
           pagination: {
             page: Number(page),
@@ -142,6 +147,7 @@ router.get(
         },
       });
 
+      const now = new Date();
       const boardData = {
         PENDING: [],
         IN_PROGRESS: [],
@@ -156,6 +162,10 @@ router.get(
             ...task,
             statusText: STATUS_TEXT[task.status],
             priorityText: PRIORITY_TEXT[task.priority],
+            isOverdue:
+              !["COMPLETED", "CANCELLED"].includes(task.status) &&
+              task.dueDate !== null &&
+              new Date(task.dueDate) < now,
           });
         }
       });
@@ -223,10 +233,48 @@ router.get(
         return res.json({ code: 404, message: "任务不存在" });
       }
 
+      // 解析评论中的mentions和attachments
+      const processedComments = await Promise.all(
+        task.comments.map(async (comment) => {
+          let mentionUsers: any[] = [];
+          let attachmentIds: string[] = [];
+
+          if (comment.mentions) {
+            try {
+              const mentionIds = JSON.parse(comment.mentions);
+              if (Array.isArray(mentionIds) && mentionIds.length > 0) {
+                const users = await prisma.user.findMany({
+                  where: { id: { in: mentionIds } },
+                  select: { id: true, username: true, nickname: true, avatar: true },
+                });
+                mentionUsers = users;
+              }
+            } catch (e) {
+              // ignore parse error
+            }
+          }
+
+          if (comment.attachments) {
+            try {
+              attachmentIds = JSON.parse(comment.attachments);
+            } catch (e) {
+              // ignore parse error
+            }
+          }
+
+          return {
+            ...comment,
+            mentionUsers,
+            attachmentIds,
+          };
+        })
+      );
+
       res.json({
         code: 200,
         data: {
           ...task,
+          comments: processedComments,
           statusText: STATUS_TEXT[task.status],
           priorityText: PRIORITY_TEXT[task.priority],
         },
@@ -489,7 +537,7 @@ router.delete(
   },
 );
 
-// 添加评论
+// 添加评论（支持@提及和附件）
 router.post(
   "/:id/comments",
   authMiddleware,
@@ -497,7 +545,7 @@ router.post(
   async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { content } = req.body;
+      const { content, mentions, attachments } = req.body;
       const userId = req.user!.userId;
 
       if (!content) {
@@ -509,11 +557,23 @@ router.post(
         return res.json({ code: 404, message: "任务不存在" });
       }
 
+      // 解析mentions：如果传入的是用户ID列表，直接使用；如果是@username格式，需要解析
+      let mentionUserIds: string[] = [];
+      if (mentions) {
+        if (Array.isArray(mentions)) {
+          mentionUserIds = mentions;
+        } else if (typeof mentions === "string") {
+          mentionUserIds = JSON.parse(mentions);
+        }
+      }
+
       const comment = await prisma.comment.create({
         data: {
           taskId: id,
           userId,
           content,
+          mentions: mentionUserIds.length > 0 ? JSON.stringify(mentionUserIds) : null,
+          attachments: attachments ? (Array.isArray(attachments) ? JSON.stringify(attachments) : attachments) : null,
         },
         include: {
           user: {
@@ -532,9 +592,39 @@ router.post(
         },
       });
 
+      // 发送通知给被@的用户
+      const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+      const userName = currentUser?.nickname || currentUser?.username || "有人";
+      for (const mentionedUserId of mentionUserIds) {
+        if (mentionedUserId !== userId) {
+          // 不通知自己
+          await createNotification(
+            mentionedUserId,
+            "mention",
+            `${userName} 在任务中提到了你`,
+            content.substring(0, 100),
+            id
+          );
+        }
+      }
+
+      // 如果任务有负责人且不是评论者，通知负责人
+      if (task.assigneeId && task.assigneeId !== userId) {
+        await createNotification(
+          task.assigneeId,
+          "comment",
+          `${userName} 评论了你的任务`,
+          content.substring(0, 100),
+          id
+        );
+      }
+
       res.json({
         code: 200,
-        data: comment,
+        data: {
+          ...comment,
+          mentionUsers: mentionUserIds,
+        },
         message: "评论添加成功",
       });
     } catch (error) {
@@ -780,6 +870,119 @@ router.get(
       res.json({ code: 500, message: "服务器错误" });
     }
   },
+);
+
+// 获取个人工作台数据（当前用户的任务统计）
+router.get(
+  "/my/dashboard",
+  authMiddleware,
+  async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.userId;
+      const now = new Date();
+
+      // 获取当前用户负责的任务
+      const myTasks = await prisma.task.findMany({
+        where: { assigneeId: userId },
+        select: { id: true, status: true, priority: true, dueDate: true },
+      });
+
+      // 获取当前用户创建的任务
+      const createdTasks = await prisma.task.findMany({
+        where: { creatorId: userId },
+        select: { id: true, status: true },
+      });
+
+      // 统计负责任务的各状态数量
+      const myStatusStats = {
+        pending: myTasks.filter((t) => t.status === "PENDING").length,
+        inProgress: myTasks.filter((t) => t.status === "IN_PROGRESS").length,
+        review: myTasks.filter((t) => t.status === "REVIEW").length,
+        completed: myTasks.filter((t) => t.status === "COMPLETED").length,
+        cancelled: myTasks.filter((t) => t.status === "CANCELLED").length,
+      };
+
+      // 统计逾期任务
+      const myOverdue = myTasks.filter(
+        (t) =>
+          !["COMPLETED", "CANCELLED"].includes(t.status) &&
+          t.dueDate !== null &&
+          new Date(t.dueDate) < now
+      ).length;
+
+      // 获取我的待办任务（未完成的）
+      const myTodoTasks = await prisma.task.findMany({
+        where: {
+          assigneeId: userId,
+          status: { notIn: ["COMPLETED", "CANCELLED"] },
+        },
+        orderBy: [{ priority: "desc" }, { dueDate: "asc" }],
+        take: 5,
+        include: {
+          creator: { select: { id: true, username: true, nickname: true } },
+        },
+      });
+
+      // 获取最近创建的任务（我创建的）
+      const recentCreatedTasks = await prisma.task.findMany({
+        where: { creatorId: userId },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: {
+          assignee: { select: { id: true, username: true, nickname: true } },
+        },
+      });
+
+      // 获取逾期提醒（今天应该完成但未完成的）
+      const todayOverdueTasks = await prisma.task.findMany({
+        where: {
+          assigneeId: userId,
+          status: { notIn: ["COMPLETED", "CANCELLED"] },
+          dueDate: {
+            lt: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
+            gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+          },
+        },
+        include: {
+          creator: { select: { id: true, username: true, nickname: true } },
+        },
+      });
+
+      res.json({
+        code: 200,
+        data: {
+          stats: {
+            total: myTasks.length,
+            ...myStatusStats,
+            overdue: myOverdue,
+            createdByMe: createdTasks.length,
+          },
+          myTodoTasks: myTodoTasks.map((t) => ({
+            ...t,
+            statusText: STATUS_TEXT[t.status],
+            priorityText: PRIORITY_TEXT[t.priority],
+            isOverdue:
+              !["COMPLETED", "CANCELLED"].includes(t.status) &&
+              t.dueDate !== null &&
+              new Date(t.dueDate) < now,
+          })),
+          recentCreatedTasks: recentCreatedTasks.map((t) => ({
+            ...t,
+            statusText: STATUS_TEXT[t.status],
+            priorityText: PRIORITY_TEXT[t.priority],
+          })),
+          todayOverdueTasks: todayOverdueTasks.map((t) => ({
+            ...t,
+            statusText: STATUS_TEXT[t.status],
+            priorityText: PRIORITY_TEXT[t.priority],
+          })),
+        },
+      });
+    } catch (error) {
+      console.error("Get my dashboard error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
 );
 
 export default router;

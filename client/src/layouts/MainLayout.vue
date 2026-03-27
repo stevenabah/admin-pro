@@ -88,7 +88,7 @@
           </el-tooltip>
           <el-tooltip content="消息" placement="bottom">
             <span class="header-icon-btn">
-              <el-icon><Bell /></el-icon>
+              <NotificationBell />
             </span>
           </el-tooltip>
           <el-tooltip content="个人中心" placement="bottom">
@@ -134,6 +134,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useUserStore } from "@/stores/user";
 import { usePermissionStore } from "@/stores/permission";
+import NotificationBell from "@/components/NotificationBell.vue";
 import {
   HomeFilled,
   User,

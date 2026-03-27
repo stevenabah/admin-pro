@@ -104,11 +104,22 @@
                   <span class="comment-author">{{
                     comment.user?.nickname || comment.user?.username
                   }}</span>
+                  <!-- 显示被@的用户 -->
+                  <span v-if="comment.mentionUsers?.length" class="comment-mentions">
+                    <span v-for="user in comment.mentionUsers" :key="user.id" class="mention-tag">
+                      @{{ user.nickname || user.username }}
+                    </span>
+                  </span>
                   <span class="comment-time">{{
                     formatDateTime(comment.createdAt)
                   }}</span>
                 </div>
-                <div class="comment-text">{{ comment.content }}</div>
+                <div class="comment-text" v-html="formatCommentContent(comment.content)"></div>
+                <!-- 显示附件 -->
+                <div v-if="comment.attachmentIds?.length" class="comment-attachments">
+                  <el-icon><Paperclip /></el-icon>
+                  <span>{{ comment.attachmentIds.length }} 个附件</span>
+                </div>
               </div>
             </div>
           </div>
@@ -123,16 +134,59 @@
               v-model="newComment"
               type="textarea"
               :rows="3"
-              placeholder="添加评论..."
+              placeholder="添加评论... 使用@用户名可以提及用户"
             />
-            <el-button
-              type="primary"
-              @click="handleAddComment"
-              style="margin-top: 10px"
-              :loading="commentLoading"
-            >
-              提交评论
-            </el-button>
+            <div class="comment-toolbar">
+              <div class="toolbar-left">
+                <el-dropdown @command="handleMentionUser" trigger="click">
+                  <el-button type="primary" link size="small">
+                    <el-icon><At /></el-icon> @提及
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item
+                        v-for="user in userList"
+                        :key="user.id"
+                        :command="user.id"
+                      >
+                        {{ user.nickname || user.username }}
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+                <el-upload
+                  :action="'/api/files/upload'"
+                  :headers="{ Authorization: `Bearer ${token}` }"
+                  :on-success="handleAttachmentSuccess"
+                  :on-error="handleAttachmentError"
+                  :show-file-list="false"
+                  multiple
+                >
+                  <el-button type="primary" link size="small">
+                    <el-icon><Paperclip /></el-icon> 附件
+                  </el-button>
+                </el-upload>
+                <div v-if="pendingAttachments.length" class="pending-attachments">
+                  <el-tag
+                    v-for="(file, index) in pendingAttachments"
+                    :key="index"
+                    closable
+                    @close="removeAttachment(index)"
+                    size="small"
+                  >
+                    {{ file.name }}
+                  </el-tag>
+                </div>
+              </div>
+              <el-button
+                type="primary"
+                @click="handleAddComment"
+                style="margin-top: 10px"
+                :loading="commentLoading"
+              >
+                提交评论
+              </el-button>
+            </div>
           </div>
         </el-card>
       </el-col>
@@ -279,7 +333,7 @@
 import { ref, reactive, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Back, Clock } from "@element-plus/icons-vue";
+import { Back, Clock, At, Paperclip } from "@element-plus/icons-vue";
 import {
   getTaskDetail,
   updateTask,
@@ -300,7 +354,10 @@ const commentLoading = ref(false);
 const taskData = ref<any>({});
 const userList = ref<any[]>([]);
 const newComment = ref("");
+const mentionedUsers = ref<string[]>([]);
+const pendingAttachments = ref<any[]>([]);
 const formRef = ref();
+const token = localStorage.getItem("token") || "";
 
 const taskForm = reactive({
   title: "",
@@ -425,10 +482,15 @@ const handleAddComment = async () => {
   }
   commentLoading.value = true;
   try {
-    const res = await addComment(route.params.id as string, newComment.value);
+    const res = await addComment(route.params.id as string, newComment.value, {
+      mentions: mentionedUsers.value,
+      attachments: pendingAttachments.value.map((f) => f.id),
+    });
     if (res.code === 200) {
       ElMessage.success("评论添加成功");
       newComment.value = "";
+      mentionedUsers.value = [];
+      pendingAttachments.value = [];
       fetchTaskDetail();
     } else {
       ElMessage.error(res.message || "添加失败");
@@ -439,6 +501,43 @@ const handleAddComment = async () => {
   } finally {
     commentLoading.value = false;
   }
+};
+
+// @提及用户
+const handleMentionUser = (userId: string) => {
+  if (!mentionedUsers.value.includes(userId)) {
+    mentionedUsers.value.push(userId);
+  }
+  const user = userList.value.find((u) => u.id === userId);
+  if (user) {
+    newComment.value += `@${user.nickname || user.username} `;
+  }
+};
+
+// 附件上传成功
+const handleAttachmentSuccess = (res: any) => {
+  if (res.code === 200) {
+    pendingAttachments.value.push(res.data);
+    ElMessage.success("附件上传成功");
+  } else {
+    ElMessage.error(res.message || "附件上传失败");
+  }
+};
+
+// 附件上传失败
+const handleAttachmentError = () => {
+  ElMessage.error("附件上传失败");
+};
+
+// 移除待上传附件
+const removeAttachment = (index: number) => {
+  pendingAttachments.value.splice(index, 1);
+};
+
+// 格式化评论内容（高亮@提及）
+const formatCommentContent = (content: string) => {
+  if (!content) return "";
+  return content.replace(/@(\w+)/g, '<span class="mention-highlight">@$1</span>');
 };
 
 // 快速状态变更
@@ -571,6 +670,37 @@ onMounted(() => {
   line-height: 1.5;
 }
 
+.comment-mentions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.mention-tag {
+  background: #ecf5ff;
+  color: #409eff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+:deep(.mention-highlight) {
+  background: #ecf5ff;
+  color: #409eff;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.comment-attachments {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+
 .log-list {
   max-height: 500px;
   overflow-y: auto;
@@ -609,6 +739,26 @@ onMounted(() => {
 
 .quick-actions {
   display: flex;
+  flex-wrap: wrap;
+}
+
+.comment-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pending-attachments {
+  display: flex;
+  gap: 4px;
   flex-wrap: wrap;
 }
 </style>

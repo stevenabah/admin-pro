@@ -125,8 +125,19 @@ export const deleteTask = (id: string) => {
 };
 
 // 添加评论
-export const addComment = (taskId: string, content: string) => {
-  return api.post(`/tasks/${taskId}/comments`, { content });
+export const addComment = (
+  taskId: string,
+  content: string,
+  options?: {
+    mentions?: string[];
+    attachments?: string[];
+  }
+) => {
+  return api.post(`/tasks/${taskId}/comments`, {
+    content,
+    mentions: options?.mentions || [],
+    attachments: options?.attachments || [],
+  });
 };
 
 // 获取任务统计
@@ -146,6 +157,11 @@ export const getTaskStatsReport = (params: {
 // 获取甘特图数据
 export const getGanttData = () => {
   return api.get("/tasks/gantt");
+};
+
+// 获取个人工作台数据
+export const getMyDashboard = () => {
+  return api.get("/tasks/my/dashboard");
 };
 
 export { api };
