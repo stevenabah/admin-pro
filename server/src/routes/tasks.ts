@@ -32,6 +32,54 @@ const PRIORITY_TEXT: Record<string, string> = {
   URGENT: "紧急",
 };
 
+// 递归获取所有子任务ID
+const getAllSubtaskIds = async (taskId: string): Promise<string[]> => {
+  const subtasks = await prisma.task.findMany({
+    where: { parentId: taskId },
+    select: { id: true },
+  });
+  let allIds = subtasks.map((s) => s.id);
+  for (const subtask of subtasks) {
+    const childIds = await getAllSubtaskIds(subtask.id);
+    allIds = [...allIds, ...childIds];
+  }
+  return allIds;
+};
+
+// 通知任务关注者
+const notifyTaskWatchers = async (
+  taskId: string,
+  type: string,
+  title: string,
+  content: string,
+  excludeUserId?: string
+) => {
+  const watchers = await prisma.taskWatch.findMany({
+    where: { taskId },
+    include: { user: true },
+  });
+  for (const watcher of watchers) {
+    if (watcher.userId !== excludeUserId) {
+      await createNotification(watcher.userId, type, title, content, taskId);
+    }
+  }
+};
+
+// 从请求中获取客户端IP
+const getClientIp = (req: AuthRequest): string => {
+  return (
+    (req.headers["x-forwarded-for"] as string)?.split(",")[0] ||
+    (req.headers["x-real-ip"] as string) ||
+    req.socket?.remoteAddress ||
+    ""
+  );
+};
+
+// 获取User Agent
+const getUserAgent = (req: AuthRequest): string => {
+  return (req.headers["user-agent"] as string) || "";
+};
+
 // 获取任务列表（支持筛选、排序、分页）
 router.get(
   "/",
@@ -47,6 +95,7 @@ router.get(
         assigneeId,
         keyword,
         tag,
+        parentId,
         sortBy = "createdAt",
         sortOrder = "desc",
       } = req.query;
@@ -71,9 +120,19 @@ router.get(
       if (tag) {
         where.tags = { contains: tag as string };
       }
+      // parentId筛选：undefined/null表示查顶层任务，"__root__"也表示查顶层任务
+      if (parentId !== undefined && parentId !== "") {
+        if (parentId === "__root__") {
+          where.parentId = null;
+        } else {
+          where.parentId = parentId;
+        }
+      }
 
       const skip = (Number(page) - 1) * Number(pageSize);
       const take = Number(pageSize);
+
+      const userId = req.user?.userId;
 
       const [tasks, total] = await Promise.all([
         prisma.task.findMany({
@@ -99,8 +158,14 @@ router.get(
               },
             },
             _count: {
-              select: { comments: true, logs: true },
+              select: { comments: true, logs: true, children: true },
             },
+            watchers: userId
+              ? {
+                  where: { userId },
+                  select: { id: true },
+                }
+              : false,
           },
         }),
         prisma.task.count({ where }),
@@ -116,6 +181,7 @@ router.get(
             parsedTags = [];
           }
         }
+        const isWatched = Array.isArray(t.watchers) && t.watchers.length > 0;
         return {
           ...t,
           tags: parsedTags,
@@ -125,6 +191,7 @@ router.get(
             !["COMPLETED", "CANCELLED"].includes(t.status) &&
             t.dueDate !== null &&
             new Date(t.dueDate) < new Date(),
+          isWatched,
         };
       });
 
@@ -367,6 +434,7 @@ router.get(
   async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user?.userId;
 
       const task = await prisma.task.findUnique({
         where: { id },
@@ -382,6 +450,32 @@ router.get(
           },
           creator: {
             select: { id: true, username: true, nickname: true, avatar: true },
+          },
+          parent: {
+            select: { id: true, title: true },
+          },
+          children: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              priority: true,
+              dueDate: true,
+              assignee: {
+                select: { id: true, username: true, nickname: true, avatar: true },
+              },
+              _count: { select: { children: true } },
+            },
+            orderBy: { createdAt: "asc" },
+          },
+          watchers: {
+            select: {
+              id: true,
+              userId: true,
+              user: {
+                select: { id: true, username: true, nickname: true, avatar: true },
+              },
+            },
           },
           comments: {
             include: {
@@ -410,6 +504,9 @@ router.get(
       if (!task) {
         return res.json({ code: 404, message: "任务不存在" });
       }
+
+      // 检查当前用户是否关注了该任务
+      const isWatched = task.watchers.some((w) => w.userId === userId);
 
       // 解析评论中的mentions和attachments和标签
       let parsedTags: string[] = [];
@@ -465,6 +562,8 @@ router.get(
           comments: processedComments,
           statusText: STATUS_TEXT[task.status],
           priorityText: PRIORITY_TEXT[task.priority],
+          isWatched,
+          watcherCount: task.watchers.length,
         },
       });
     } catch (error) {
@@ -481,8 +580,10 @@ router.post(
   checkPermission("taskManage"),
   async (req: AuthRequest, res) => {
     try {
-      const { title, description, priority, assigneeId, dueDate, tags } = req.body;
+      const { title, description, priority, assigneeId, dueDate, tags, parentId, recurrenceRule } = req.body;
       const creatorId = req.user!.userId;
+      const ipAddress = getClientIp(req);
+      const userAgent = getUserAgent(req);
 
       if (!title) {
         return res.json({ code: 400, message: "任务标题不能为空" });
@@ -498,6 +599,25 @@ router.post(
         }
       }
 
+      // 验证父任务是否存在（如果是子任务）
+      if (parentId) {
+        const parentTask = await prisma.task.findUnique({
+          where: { id: parentId },
+        });
+        if (!parentTask) {
+          return res.json({ code: 400, message: "父任务不存在" });
+        }
+      }
+
+      // 验证cron表达式是否有效
+      if (recurrenceRule) {
+        // 简单验证cron表达式格式（5个字段）
+        const cronFields = recurrenceRule.trim().split(/\s+/);
+        if (cronFields.length !== 5) {
+          return res.json({ code: 400, message: "重复规则 cron 表达式格式不正确（需要5个字段）" });
+        }
+      }
+
       const task = await prisma.task.create({
         data: {
           title,
@@ -507,6 +627,9 @@ router.post(
           creatorId,
           dueDate: dueDate ? new Date(dueDate) : null,
           tags: tags && Array.isArray(tags) ? JSON.stringify(tags) : null,
+          parentId: parentId || null,
+          recurrenceRule: recurrenceRule || null,
+          isRecurrence: !!recurrenceRule,
         },
         include: {
           assignee: {
@@ -518,15 +641,41 @@ router.post(
         },
       });
 
-      // 创建任务日志
+      // 创建任务日志（带审计信息）
       await prisma.taskLog.create({
         data: {
           taskId: task.id,
           userId: creatorId,
-          action: "create",
-          content: "创建了任务",
+          action: parentId ? "subtask_create" : "create",
+          content: parentId ? "创建了子任务" : "创建了任务",
+          ipAddress,
+          userAgent,
+          changeDetails: JSON.stringify({
+            title,
+            description,
+            priority,
+            assigneeId,
+            dueDate,
+            tags,
+            parentId,
+            recurrenceRule,
+          }),
         },
       });
+
+      // 如果是子任务，同时记录父任务的日志
+      if (parentId) {
+        await prisma.taskLog.create({
+          data: {
+            taskId: parentId,
+            userId: creatorId,
+            action: "update",
+            content: `添加了子任务：${title}`,
+            ipAddress,
+            userAgent,
+          },
+        });
+      }
 
       // 发送通知给任务负责人
       if (assigneeId && assigneeId !== creatorId) {
@@ -539,6 +688,16 @@ router.post(
           title,
           task.id
         );
+      }
+
+      // 如果设定了重复规则，自动关注该任务
+      if (recurrenceRule) {
+        await prisma.taskWatch.create({
+          data: {
+            taskId: task.id,
+            userId: creatorId,
+          },
+        });
       }
 
       // 解析标签
@@ -576,8 +735,10 @@ router.put(
   async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { title, description, priority, assigneeId, dueDate, tags } = req.body;
+      const { title, description, priority, assigneeId, dueDate, tags, recurrenceRule } = req.body;
       const userId = req.user!.userId;
+      const ipAddress = getClientIp(req);
+      const userAgent = getUserAgent(req);
 
       const existingTask = await prisma.task.findUnique({ where: { id } });
       if (!existingTask) {
@@ -594,6 +755,14 @@ router.put(
         }
       }
 
+      // 验证cron表达式是否有效
+      if (recurrenceRule !== undefined && recurrenceRule) {
+        const cronFields = recurrenceRule.trim().split(/\s+/);
+        if (cronFields.length !== 5) {
+          return res.json({ code: 400, message: "重复规则 cron 表达式格式不正确（需要5个字段）" });
+        }
+      }
+
       const updateData: any = {};
       if (title !== undefined) updateData.title = title;
       if (description !== undefined) updateData.description = description;
@@ -604,6 +773,10 @@ router.put(
       }
       if (tags !== undefined) {
         updateData.tags = tags && Array.isArray(tags) ? JSON.stringify(tags) : null;
+      }
+      if (recurrenceRule !== undefined) {
+        updateData.recurrenceRule = recurrenceRule;
+        updateData.isRecurrence = !!recurrenceRule;
       }
 
       const task = await prisma.task.update({
@@ -619,7 +792,25 @@ router.put(
         },
       });
 
-      // 记录日志
+      // 记录变更详情用于日志
+      const changeDetails: Record<string, { from: any; to: any }> = {};
+      if (title !== undefined && title !== existingTask.title) {
+        changeDetails.title = { from: existingTask.title, to: title };
+      }
+      if (description !== undefined && description !== existingTask.description) {
+        changeDetails.description = { from: existingTask.description, to: description };
+      }
+      if (priority !== undefined && priority !== existingTask.priority) {
+        changeDetails.priority = { from: existingTask.priority, to: priority };
+      }
+      if (assigneeId !== undefined && assigneeId !== existingTask.assigneeId) {
+        changeDetails.assigneeId = { from: existingTask.assigneeId, to: assigneeId };
+      }
+      if (recurrenceRule !== undefined && recurrenceRule !== existingTask.recurrenceRule) {
+        changeDetails.recurrenceRule = { from: existingTask.recurrenceRule, to: recurrenceRule };
+      }
+
+      // 记录日志（带审计信息）
       let logContent = "更新了任务";
       if (title !== undefined && title !== existingTask.title) {
         logContent += `，标题改为"${title}"`;
@@ -630,6 +821,13 @@ router.put(
       if (assigneeId !== undefined && assigneeId !== existingTask.assigneeId) {
         logContent += "，重新指派任务";
       }
+      if (recurrenceRule !== undefined && recurrenceRule !== existingTask.recurrenceRule) {
+        if (recurrenceRule) {
+          logContent += "，设置了重复规则";
+        } else {
+          logContent += "，取消了重复规则";
+        }
+      }
 
       await prisma.taskLog.create({
         data: {
@@ -637,6 +835,9 @@ router.put(
           userId,
           action: "update",
           content: logContent,
+          ipAddress,
+          userAgent,
+          changeDetails: Object.keys(changeDetails).length > 0 ? JSON.stringify(changeDetails) : null,
         },
       });
 
@@ -652,6 +853,17 @@ router.put(
           id
         );
       }
+
+      // 通知任务关注者
+      const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+      const userName = currentUser?.nickname || currentUser?.username || "有人";
+      await notifyTaskWatchers(
+        id,
+        "update",
+        `任务被更新`,
+        `${userName} 更新了任务"${task.title}"`,
+        userId
+      );
 
       // 解析标签
       let parsedTags: string[] = [];
@@ -1554,6 +1766,483 @@ router.get(
       });
     } catch (error) {
       console.error("Get gantt data error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// ============ V2.0 新增接口 ============
+
+// 获取子任务列表（递归）
+router.get(
+  "/:id/subtasks",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { recursive = "false" } = req.query;
+
+      const task = await prisma.task.findUnique({ where: { id } });
+      if (!task) {
+        return res.json({ code: 404, message: "任务不存在" });
+      }
+
+      const parseTags = (tagsStr: string | null): string[] => {
+        if (!tagsStr) return [];
+        try {
+          return JSON.parse(tagsStr);
+        } catch {
+          return [];
+        }
+      };
+
+      const formatTask = (t: any): any => ({
+        ...t,
+        tags: parseTags(t.tags),
+        statusText: STATUS_TEXT[t.status],
+        priorityText: PRIORITY_TEXT[t.priority],
+        children: undefined, // 避免循环
+      });
+
+      if (recursive === "true") {
+        // 递归获取所有子任务
+        const getSubtasksRecursive = async (parentId: string, depth = 0): Promise<any[]> => {
+          const subtasks = await prisma.task.findMany({
+            where: { parentId },
+            include: {
+              assignee: { select: { id: true, username: true, nickname: true, avatar: true } },
+              creator: { select: { id: true, username: true, nickname: true } },
+              _count: { select: { children: true, comments: true } },
+            },
+            orderBy: { createdAt: "asc" },
+          });
+
+          const result = [];
+          for (const subtask of subtasks) {
+            const formatted = formatTask(subtask);
+            formatted.depth = depth;
+            if (subtask._count.children > 0) {
+              formatted.subtasks = await getSubtasksRecursive(subtask.id, depth + 1);
+            }
+            result.push(formatted);
+          }
+          return result;
+        };
+
+        const allSubtasks = await getSubtasksRecursive(id);
+        res.json({ code: 200, data: allSubtasks });
+      } else {
+        // 只获取直接子任务
+        const subtasks = await prisma.task.findMany({
+          where: { parentId: id },
+          include: {
+            assignee: { select: { id: true, username: true, nickname: true, avatar: true } },
+            creator: { select: { id: true, username: true, nickname: true } },
+            _count: { select: { children: true, comments: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        });
+
+        res.json({
+          code: 200,
+          data: subtasks.map((t) => ({
+            ...formatTask(t),
+            hasChildren: t._count.children > 0,
+            commentCount: t._count.comments,
+          })),
+        });
+      }
+    } catch (error) {
+      console.error("Get subtasks error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 创建子任务
+router.post(
+  "/:id/subtasks",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { title, description, priority, assigneeId, dueDate, tags } = req.body;
+      const creatorId = req.user!.userId;
+      const ipAddress = getClientIp(req);
+      const userAgent = getUserAgent(req);
+
+      if (!title) {
+        return res.json({ code: 400, message: "子任务标题不能为空" });
+      }
+
+      // 验证父任务是否存在
+      const parentTask = await prisma.task.findUnique({ where: { id } });
+      if (!parentTask) {
+        return res.json({ code: 404, message: "父任务不存在" });
+      }
+
+      // 验证指派人是否存在
+      if (assigneeId) {
+        const assignee = await prisma.user.findUnique({ where: { id: assigneeId } });
+        if (!assignee) {
+          return res.json({ code: 400, message: "指派用户不存在" });
+        }
+      }
+
+      const subtask = await prisma.task.create({
+        data: {
+          title,
+          description,
+          priority: priority || "MEDIUM",
+          assigneeId,
+          creatorId,
+          dueDate: dueDate ? new Date(dueDate) : null,
+          tags: tags && Array.isArray(tags) ? JSON.stringify(tags) : null,
+          parentId: id,
+        },
+        include: {
+          assignee: { select: { id: true, username: true, nickname: true, avatar: true } },
+          creator: { select: { id: true, username: true, nickname: true, avatar: true } },
+        },
+      });
+
+      // 记录子任务的创建日志
+      await prisma.taskLog.create({
+        data: {
+          taskId: subtask.id,
+          userId: creatorId,
+          action: "subtask_create",
+          content: "创建了子任务",
+          ipAddress,
+          userAgent,
+          changeDetails: JSON.stringify({ title, description, priority, assigneeId, dueDate, tags, parentId: id }),
+        },
+      });
+
+      // 记录父任务的更新日志
+      await prisma.taskLog.create({
+        data: {
+          taskId: id,
+          userId: creatorId,
+          action: "update",
+          content: `添加了子任务：${title}`,
+          ipAddress,
+          userAgent,
+        },
+      });
+
+      // 发送通知给任务负责人
+      if (assigneeId && assigneeId !== creatorId) {
+        const creator = await prisma.user.findUnique({ where: { id: creatorId } });
+        const creatorName = creator?.nickname || creator?.username || "有人";
+        await createNotification(
+          assigneeId,
+          "assign",
+          `${creatorName} 给你分配了新子任务`,
+          title,
+          subtask.id
+        );
+      }
+
+      // 通知父任务的关注者
+      const currentUser = await prisma.user.findUnique({ where: { id: creatorId } });
+      const userName = currentUser?.nickname || currentUser?.username || "有人";
+      await notifyTaskWatchers(
+        id,
+        "update",
+        `父任务添加了新子任务`,
+        `${userName} 在任务"${parentTask.title}"下添加了子任务"${title}"`,
+        creatorId
+      );
+
+      let parsedTags: string[] = [];
+      if (subtask.tags) {
+        try {
+          parsedTags = JSON.parse(subtask.tags);
+        } catch {
+          parsedTags = [];
+        }
+      }
+
+      res.json({
+        code: 200,
+        data: {
+          ...subtask,
+          tags: parsedTags,
+          statusText: STATUS_TEXT[subtask.status],
+          priorityText: PRIORITY_TEXT[subtask.priority],
+        },
+        message: "子任务创建成功",
+      });
+    } catch (error) {
+      console.error("Create subtask error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 关注/取消关注任务
+router.post(
+  "/:id/watch",
+  authMiddleware,
+  async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user!.userId;
+      const ipAddress = getClientIp(req);
+      const userAgent = getUserAgent(req);
+
+      const task = await prisma.task.findUnique({ where: { id } });
+      if (!task) {
+        return res.json({ code: 404, message: "任务不存在" });
+      }
+
+      // 检查是否已经关注
+      const existingWatch = await prisma.taskWatch.findUnique({
+        where: {
+          taskId_userId: { taskId: id, userId },
+        },
+      });
+
+      if (existingWatch) {
+        // 取消关注
+        await prisma.taskWatch.delete({
+          where: { id: existingWatch.id },
+        });
+
+        await prisma.taskLog.create({
+          data: {
+            taskId: id,
+            userId,
+            action: "unwatch",
+            content: "取消了关注",
+            ipAddress,
+            userAgent,
+          },
+        });
+
+        res.json({ code: 200, data: { isWatched: false }, message: "已取消关注" });
+      } else {
+        // 添加关注
+        await prisma.taskWatch.create({
+          data: {
+            taskId: id,
+            userId,
+          },
+        });
+
+        await prisma.taskLog.create({
+          data: {
+            taskId: id,
+            userId,
+            action: "watch",
+            content: "关注了任务",
+            ipAddress,
+            userAgent,
+          },
+        });
+
+        res.json({ code: 200, data: { isWatched: true }, message: "已关注任务" });
+      }
+    } catch (error) {
+      console.error("Watch task error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 获取任务的关注者列表
+router.get(
+  "/:id/watchers",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      const task = await prisma.task.findUnique({ where: { id } });
+      if (!task) {
+        return res.json({ code: 404, message: "任务不存在" });
+      }
+
+      const watchers = await prisma.taskWatch.findMany({
+        where: { taskId: id },
+        include: {
+          user: {
+            select: { id: true, username: true, nickname: true, avatar: true, email: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      res.json({
+        code: 200,
+        data: watchers.map((w) => ({
+          id: w.id,
+          userId: w.userId,
+          watchedAt: w.createdAt,
+          user: w.user,
+        })),
+      });
+    } catch (error) {
+      console.error("Get watchers error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 获取我关注的任务列表
+router.get(
+  "/my/watched",
+  authMiddleware,
+  async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.userId;
+      const { page = "1", pageSize = "10" } = req.query;
+
+      const skip = (Number(page) - 1) * Number(pageSize);
+      const take = Number(pageSize);
+
+      const [watches, total] = await Promise.all([
+        prisma.taskWatch.findMany({
+          where: { userId },
+          skip,
+          take,
+          include: {
+            task: {
+              include: {
+                assignee: { select: { id: true, username: true, nickname: true, avatar: true } },
+                creator: { select: { id: true, username: true, nickname: true, avatar: true } },
+                _count: { select: { comments: true, logs: true, children: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.taskWatch.count({ where: { userId } }),
+      ]);
+
+      const parseTags = (tagsStr: string | null): string[] => {
+        if (!tagsStr) return [];
+        try {
+          return JSON.parse(tagsStr);
+        } catch {
+          return [];
+        }
+      };
+
+      res.json({
+        code: 200,
+        data: {
+          list: watches.map((w) => ({
+            watchId: w.id,
+            watchedAt: w.createdAt,
+            task: {
+              ...w.task,
+              tags: parseTags(w.task.tags),
+              statusText: STATUS_TEXT[w.task.status],
+              priorityText: PRIORITY_TEXT[w.task.priority],
+              isWatched: true,
+            },
+          })),
+          pagination: {
+            page: Number(page),
+            pageSize: Number(pageSize),
+            total,
+            totalPages: Math.ceil(total / Number(pageSize)),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Get watched tasks error:", error);
+      res.json({ code: 500, message: "服务器错误" });
+    }
+  }
+);
+
+// 完成子任务（快捷操作）
+router.put(
+  "/:id/complete",
+  authMiddleware,
+  checkPermission("taskManage"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user!.userId;
+      const ipAddress = getClientIp(req);
+      const userAgent = getUserAgent(req);
+
+      const task = await prisma.task.findUnique({ where: { id } });
+      if (!task) {
+        return res.json({ code: 404, message: "任务不存在" });
+      }
+
+      if (task.status === "COMPLETED") {
+        return res.json({ code: 400, message: "任务已完成" });
+      }
+
+      const previousStatus = task.status;
+      const updatedTask = await prisma.task.update({
+        where: { id },
+        data: { status: "COMPLETED" },
+        include: {
+          assignee: { select: { id: true, username: true, nickname: true, avatar: true } },
+          creator: { select: { id: true, username: true, nickname: true } },
+        },
+      });
+
+      // 记录日志
+      await prisma.taskLog.create({
+        data: {
+          taskId: id,
+          userId,
+          action: "status_change",
+          beforeStatus: previousStatus,
+          afterStatus: "COMPLETED",
+          content: `将任务状态从 ${STATUS_TEXT[previousStatus]} 改为 ${STATUS_TEXT.COMPLETED}`,
+          ipAddress,
+          userAgent,
+          changeDetails: JSON.stringify({ status: { from: previousStatus, to: "COMPLETED" } }),
+        },
+      });
+
+      // 通知任务创建者（如果不是自己完成的）
+      if (task.creatorId !== userId) {
+        const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+        const userName = currentUser?.nickname || currentUser?.username || "有人";
+        await createNotification(
+          task.creatorId,
+          "status_change",
+          `${userName} 完成了任务`,
+          task.title,
+          id
+        );
+      }
+
+      // 通知任务关注者
+      const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+      const userName = currentUser?.nickname || currentUser?.username || "有人";
+      await notifyTaskWatchers(
+        id,
+        "status_change",
+        `任务已完成`,
+        `${userName} 完成了任务"${task.title}"`,
+        userId
+      );
+
+      res.json({
+        code: 200,
+        data: {
+          ...updatedTask,
+          statusText: STATUS_TEXT.COMPLETED,
+          priorityText: PRIORITY_TEXT[updatedTask.priority],
+        },
+        message: "任务已完成",
+      });
+    } catch (error) {
+      console.error("Complete task error:", error);
       res.json({ code: 500, message: "服务器错误" });
     }
   }

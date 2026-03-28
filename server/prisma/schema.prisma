@@ -29,6 +29,8 @@ model User {
   taskLogs       TaskLog[] @relation("TaskLogUser")
   // 评论
   comments       Comment[] @relation("CommentUser")
+  // 我关注的任务
+  watchedTasks   TaskWatch[] @relation("TaskWatchUser")
 }
 
 model Role {
@@ -99,27 +101,34 @@ model DataRecord {
 // status: PENDING | IN_PROGRESS | REVIEW | COMPLETED | CANCELLED
 // priority: LOW | MEDIUM | HIGH | URGENT
 model Task {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  status      String   @default("PENDING")
-  priority    String   @default("MEDIUM")
-  assigneeId  String?
-  creatorId   String
-  dueDate     DateTime?
-  tags        String?  // JSON数组，存储标签ID列表，如 ["tag1", "tag2"]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid())
+  title          String
+  description    String?
+  status         String   @default("PENDING")
+  priority       String   @default("MEDIUM")
+  assigneeId     String?
+  creatorId      String
+  dueDate        DateTime?
+  tags           String?  // JSON数组，存储标签ID列表，如 ["tag1", "tag2"]
+  parentId       String?  // 父任务ID，支持子任务
+  recurrenceRule String?  // Cron表达式，用于重复任务，如 "0 0 * * *" 表示每天凌晨
+  isRecurrence   Boolean  @default(false) // 是否为重复任务产生的实例
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  assignee    User?    @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  creator     User     @relation("TaskCreator", fields: [creatorId], references: [id])
-  logs        TaskLog[]
-  comments    Comment[]
+  assignee       User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator        User      @relation("TaskCreator", fields: [creatorId], references: [id])
+  parent         Task?     @relation("TaskParent", fields: [parentId], references: [id], onDelete: Cascade)
+  children       Task[]    @relation("TaskParent")
+  logs           TaskLog[]
+  comments       Comment[]
+  watchers       TaskWatch[]
 
   @@index([status])
   @@index([assigneeId])
   @@index([creatorId])
   @@index([dueDate])
+  @@index([parentId])
 }
 
 // 标签表
@@ -136,17 +145,20 @@ model Tag {
 
 // 任务日志表
 model TaskLog {
-  id          String   @id @default(uuid())
-  taskId      String
-  userId      String
-  action      String   // 动作类型: create, update, status_change, assign, comment
-  beforeStatus String?
-  afterStatus  String?
-  content     String?  // 额外描述
-  createdAt   DateTime @default(now())
+  id            String   @id @default(uuid())
+  taskId        String
+  userId        String
+  action        String   // 动作类型: create, update, status_change, assign, comment, watch, unwatch, subtask_create
+  beforeStatus  String?
+  afterStatus   String?
+  content       String?  // 额外描述
+  ipAddress     String?  // 操作者IP地址
+  userAgent     String?  // 操作者User Agent
+  changeDetails String?  // JSON格式，记录变更详情
+  createdAt     DateTime @default(now())
 
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user        User     @relation("TaskLogUser", fields: [userId], references: [id])
+  task          Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User     @relation("TaskLogUser", fields: [userId], references: [id])
 
   @@index([taskId])
   @@index([userId])
@@ -166,6 +178,21 @@ model Comment {
   task          Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user          User     @relation("CommentUser", fields: [userId], references: [id])
 
+  @@index([taskId])
+  @@index([userId])
+}
+
+// 任务关注表 (用于收藏/关注任务)
+model TaskWatch {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation("TaskWatchUser", fields: [userId], references: [id])
+
+  @@unique([taskId, userId])
   @@index([taskId])
   @@index([userId])
 }

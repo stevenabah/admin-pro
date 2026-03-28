@@ -101,6 +101,8 @@ export const createTask = (data: {
   assigneeId?: string;
   dueDate?: string;
   tags?: string[];
+  parentId?: string;
+  recurrenceRule?: string;
 }) => {
   return api.post("/tasks", data);
 };
@@ -116,6 +118,7 @@ export const updateTask = (
     dueDate?: string;
     status?: TaskStatusType;
     tags?: string[];
+    recurrenceRule?: string;
   },
 ) => {
   return api.put(`/tasks/${id}`, data);
@@ -160,6 +163,48 @@ export const addComment = (
 // 获取任务统计
 export const getTaskStats = () => {
   return api.get("/tasks/stats/summary");
+};
+
+// ============ V2.0 新增接口 ============
+
+// 获取子任务列表
+export const getSubtasks = (taskId: string, recursive = false) => {
+  return api.get(`/tasks/${taskId}/subtasks`, { params: { recursive } });
+};
+
+// 创建子任务
+export const createSubtask = (taskId: string, data: {
+  title: string;
+  description?: string;
+  priority?: TaskPriorityType;
+  assigneeId?: string;
+  dueDate?: string;
+  tags?: string[];
+}) => {
+  return api.post(`/tasks/${taskId}/subtasks`, data);
+};
+
+// 关注/取消关注任务
+export const toggleWatchTask = (taskId: string) => {
+  return api.post(`/tasks/${taskId}/watch`);
+};
+
+// 获取任务关注者列表
+export const getTaskWatchers = (taskId: string) => {
+  return api.get(`/tasks/${taskId}/watchers`);
+};
+
+// 获取我关注的任务列表
+export const getWatchedTasks = (params?: {
+  page?: number;
+  pageSize?: number;
+}) => {
+  return api.get("/tasks/my/watched", { params });
+};
+
+// 完成子任务
+export const completeSubtask = (taskId: string) => {
+  return api.put(`/tasks/${taskId}/complete`);
 };
 
 // 获取任务统计报表

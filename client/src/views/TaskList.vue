@@ -116,9 +116,14 @@
         <el-table-column type="selection" width="50" />
         <el-table-column prop="title" label="任务标题" min-width="200">
           <template #default="{ row }">
-            <el-link type="primary" @click="goToDetail(row.id)">{{
-              row.title
-            }}</el-link>
+            <div class="task-title-cell">
+              <el-icon v-if="row.isWatched" class="watch-icon"><Star /></el-icon>
+              <el-link type="primary" @click="goToDetail(row.id)">{{ row.title }}</el-link>
+              <el-tag v-if="row._count?.children > 0" size="small" type="info" style="margin-left: 4px">
+                {{ row._count.children }} 子任务
+              </el-tag>
+              <el-tag v-if="row.isRecurrence" size="small" type="success" style="margin-left: 4px">重复</el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="tags" label="标签" width="150">
@@ -182,14 +187,18 @@
             {{ formatDate(row.createdAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" size="small" @click="openEditDialog(row)"
-              >编辑</el-button
-            >
-            <el-button type="danger" size="small" @click="handleDelete(row.id)"
-              >删除</el-button
-            >
+            <el-button
+              :type="row.isWatched ? 'warning' : 'default'"
+              size="small"
+              @click="handleToggleWatch(row)"
+              :icon="Star"
+              circle
+              :title="row.isWatched ? '取消关注' : '关注'"
+            />
+            <el-button type="primary" size="small" @click="openEditDialog(row)">编辑</el-button>
+            <el-button type="danger" size="small" @click="handleDelete(row.id)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -288,6 +297,19 @@
               <span :style="{ color: tag.color, marginRight: '8px' }">●</span>
               {{ tag.name }}
             </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="重复规则" prop="recurrenceRule">
+          <el-select
+            v-model="taskForm.recurrenceRule"
+            placeholder="设置重复规则（可选）"
+            clearable
+            style="width: 100%"
+          >
+            <el-option label="每天" value="0 0 * * *" />
+            <el-option label="每周一" value="0 0 * * 1" />
+            <el-option label="每月第一天" value="0 0 1 * *" />
+            <el-option label="每年1月1日" value="0 0 1 1 *" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="isEdit" label="状态" prop="status">
@@ -396,7 +418,7 @@
 import { ref, reactive, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Plus, ArrowDown, Download } from "@element-plus/icons-vue";
+import { Plus, ArrowDown, Download, Star } from "@element-plus/icons-vue";
 import {
   getTaskList,
   createTask,
@@ -407,6 +429,7 @@ import {
   batchAssignTask,
   batchDeleteTask,
   exportTasks,
+  toggleWatchTask,
   TaskStatusConfig,
   TaskPriorityConfig,
 } from "@/api/task";
@@ -464,6 +487,7 @@ const taskForm = reactive({
   dueDate: "",
   status: "PENDING" as TaskStatusType,
   tags: [] as string[],
+  recurrenceRule: "" as string | "",
 });
 
 // 表单验证
@@ -691,6 +715,7 @@ const openCreateDialog = () => {
   taskForm.dueDate = "";
   taskForm.status = "PENDING";
   taskForm.tags = [];
+  taskForm.recurrenceRule = "";
   dialogVisible.value = true;
 };
 
@@ -705,6 +730,7 @@ const openEditDialog = (row: any) => {
   taskForm.dueDate = row.dueDate ? row.dueDate.split("T")[0] : "";
   taskForm.status = row.status;
   taskForm.tags = row.tags || [];
+  taskForm.recurrenceRule = row.recurrenceRule || "";
   dialogVisible.value = true;
 };
 
@@ -722,6 +748,7 @@ const handleSubmit = async () => {
           assigneeId: taskForm.assigneeId || undefined,
           dueDate: taskForm.dueDate || undefined,
           tags: taskForm.tags,
+          recurrenceRule: taskForm.recurrenceRule || undefined,
         };
 
         let res;
@@ -861,6 +888,22 @@ const goToDetail = (id: string) => {
   router.push(`/task/${id}`);
 };
 
+// 切换关注状态
+const handleToggleWatch = async (row: any) => {
+  try {
+    const res = await toggleWatchTask(row.id);
+    if (res.code === 200) {
+      ElMessage.success(res.message);
+      fetchTaskList();
+    } else {
+      ElMessage.error(res.message || "操作失败");
+    }
+  } catch (error) {
+    console.error("Toggle watch error:", error);
+    ElMessage.error("操作失败");
+  }
+};
+
 // 日期格式化
 const formatDate = (date: string) => {
   if (!date) return "";
@@ -930,5 +973,15 @@ onMounted(() => {
   display: flex;
   align-items: center;
   margin-top: 16px;
+}
+
+.task-title-cell {
+  display: flex;
+  align-items: center;
+}
+
+.watch-icon {
+  color: #e6a23c;
+  margin-right: 4px;
 }
 </style>
